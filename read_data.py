@@ -11,16 +11,18 @@ def load_gold(directory):
 
     output :
         - dictionnary with gold output, 3 verbs as keys. For each verb, you can loop through the ids to get
-        to the gold class and sentence associated with it.
+        to the gold class, sentence, and fragment of conll associated with it.
     """
     gold_files = [fichier for fichier in glob.glob(os.path.join(directory, "*.tab"))]
     gold_results = {}
 
     for fichier in gold_files:
-
-        rang=0
+        num_data, index_conll=0, 0
         verb = fichier.split("/")[-1][:-4]
         gold_results[verb] = {}
+        last_identifiant = None
+
+        conll_verb = open("../data_WSD_VS/"+verb+".deep_and_surf.sensetagged.conll").read().split("\n\n")
 
         for line in open(os.path.join(directory, fichier)):
 
@@ -29,9 +31,14 @@ def load_gold(directory):
 
             try:
                 classe_gold = mappingMatch.group(1)
+                identifiant = int(mappingMatch.group(2))
                 phrase = mappingMatch.group(3)
-                gold_results[verb][rang]={"classe": classe_gold, "phrase":phrase}
-                rang+=1
+                if identifiant == last_identifiant: # some sentences have several occurences of the verb to disambiguate
+                    index_conll-=1
+                gold_results[verb][num_data]={"classe": classe_gold, "phrase":phrase, "conll":conll_verb[index_conll]}
+                num_data+=1
+                index_conll+=1
+                last_identifiant = identifiant
 
             except AttributeError: continue
 
