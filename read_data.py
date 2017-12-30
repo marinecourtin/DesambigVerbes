@@ -30,24 +30,26 @@ def load_gold(directory):
             except AttributeError:
                 # comments
                 continue
-    return gold_results["affecter"]
-#
-#
-def divide_data_in_train_test(gold_data_for_verb, percentage_train=0.8):
+    return gold_results
+
+
+def divide_data_in_train_test(gold_data, percentage_train=0.8):
     """
-    Divides randomly (but reproducibly) the gold data into a train set and a test_set
+    Divides randomly (but reproducibly) the gold data into a train set and a test set
 
     intput:
-        - a dictionary containing the gold data for a verb
+        - a dictionary containing the gold data
         - the percentage of train data
     output:
         2 dictionaries : 1 with train data and the other with test data
     """
-    nb_data = len(gold_data_for_verb)-1
-    index_train_data = np.linspace(0, nb_data, int(percentage_train*nb_data), dtype=int).tolist()
-    train_data_for_verb = dict([item for item in gold_data_for_verb.items() if item[0] in index_train_data])
-    test_data_for_verb = dict([item for item in gold_data_for_verb.items() if item[0] not in index_train_data])
-    return train_data_for_verb, test_data_for_verb
+    train, test = {}, {}
+    for verb in gold_data:
+        nb_data = len(gold_data[verb])-1
+        index_train_data = np.linspace(0, nb_data, int(percentage_train*nb_data), dtype=int).tolist()
+        train[verb] = dict([item for item in gold_data[verb].items() if item[0] in index_train_data])
+        test[verb] = dict([item for item in gold_data[verb].items() if item[0] not in index_train_data])
+    return train, test
 
 
 if __name__ == "__main__":
