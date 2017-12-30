@@ -100,11 +100,37 @@ def get_linear_context(bloc_sentence, pos_ignored, ctx_size=2, ):
     return linear_context_filtered
 
 
+def linear_ctx_2_cbow(linear_context, model):
+    """
+    Creates a vectorial representation of the linear context based on a word2vec model
+
+    input :
+        - linear_context : list of the lemmas in the context window
+        - model : the word2vec model used the get word embeddings
+
+    output :
+        - the cbow representing the linear context (numpy array)
+    """
+
+    rep_vec = None
+
+    for lemma in linear_context:
+
+        if isinstance(rep_vec, np.ndarray):
+            rep_vec += model[lemma] # le vecteur a déjà été initialisé
+        else:
+            rep_vec=model[lemma] # on initialise et on type
+
+    return rep_vec
+
+
 
 
 if __name__ == "__main__":
     gold_affecter = load_gold("../data_WSD_VS")
     divide_data_in_train_test(gold_affecter, 0.8)
-    bloc_sentence = open("../data_WSD_VS/abattre.deep_and_surf.sensetagged.conll").read().split("\n\n")[0]
+    bloc_sentence = open("../data_WSD_VS/abattre.deep_and_surf.sensetagged.conll").read().split("\n\n")[3]
     pos_ignored = ['PUNCT']
     linear_context = get_linear_context(bloc_sentence, pos_ignored)
+    model = word2vec.load("../vecs100-linear-frwiki/data", kind="txt")
+    linear_ctx_2_cbow(linear_context, model)
