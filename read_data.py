@@ -13,7 +13,7 @@ def load_gold(directory):
         - dictionnary with gold output, 3 verbs as keys. For each verb, you can loop through the ids to get
         to the gold class, sentence, and fragment of conll associated with it.
     """
-    gold_files = [fichier for fichier in glob.glob(os.path.join(directory, "*.tab"))]
+    gold_files = [fichier for fichier in glob.glob(os.path.join(directory, "abattre*.tab"))]
     gold_results = {}
 
     for fichier in gold_files:
@@ -23,6 +23,7 @@ def load_gold(directory):
         last_identifiant = None
 
         conll_verb = open("../data_WSD_VS/"+verb+".deep_and_surf.sensetagged.conll").read().split("\n\n")
+        # conll_verb = [instance for instance in conll_verb if re.search("\S", instance)] # we don't want lines with only whitespaces
 
         for line in open(os.path.join(directory, fichier)):
 
@@ -30,17 +31,17 @@ def load_gold(directory):
             mappingMatch = re.match(motif, line)
 
             try:
-                classe_gold = mappingMatch.group(1)
+                classe_gold = mappingMatch.group(1).split("#")[1]
                 identifiant = int(mappingMatch.group(2))
                 phrase = mappingMatch.group(3)
                 if identifiant == last_identifiant: # some sentences have several occurences of the verb to disambiguate
-                    index_conll-=1
+                    index_conll-=1 # I also repeated 2 blocs of the conll when the sentences with several occurences didn't follow each other
                 gold_results[verb][num_data]={"classe": classe_gold, "phrase":phrase, "conll":conll_verb[index_conll]}
                 num_data+=1
                 index_conll+=1
                 last_identifiant = identifiant
 
-            except AttributeError: continue
+            except AttributeError: continue #comments
 
     return gold_results
 
@@ -80,29 +81,43 @@ def get_linear_context(bloc_sentence, pos_ignored, ctx_size=2, ):
         - list of lemmas present in the context window
     """
     motif = re.compile("^(?:(\d+)\t)(?:.+?sense=(?:.+?)\|)", re.MULTILINE)
-    index_verb_to_deambiguate = int(re.search(motif, bloc_sentence).group(1))-1
+    try:
+        index_verb_to_deambiguate = int(re.search(motif, bloc_sentence).group(1))-1
+    except AttributeError: # le mot n'a pas été repéré par sense= ...
+        # une occurence bizarre de "affeterai" en mot-forme et lemme, tout de même prise en compte
+        # print(bloc_sentence)
+        motif_2 = re.compile("^(\d+)\t[^\t]+\t(affecter|aborder|abattre|affeterai)", re.MULTILINE) # TODO modifier le motif (en cours)
+        index_verb_to_deambiguate = int(re.search(motif_2, bloc_sentence).group(1))-1
+        # print("===== motif passed yay")
 
     linear_context = []
     for line in bloc_sentence.split("\n"):
-        index, forme, lemme, upos, xpos, features, idgov, func, misc1, misc2 = line.split("\t")
-        linear_context.append((lemme, upos))
+        try:
+            index, forme, lemme, upos, xpos, features, idgov, func, misc1, misc2 = line.split("\t")
+            linear_context.append((lemme, upos))
+        except ValueError:
+            print(line)
     linear_context_filtered = [] # context is filtered according to the size we passed in the args
 
 
     # contexte gauche
     count = 1
     while count <= ctx_size:
-        if linear_context[index_verb_to_deambiguate-count][1] not in pos_ignored:
-            linear_context_filtered.append(linear_context[index_verb_to_deambiguate-count][0])
-            count+=1
+        try:
+            if linear_context[index_verb_to_deambiguate-count][1] not in pos_ignored:
+                linear_context_filtered.append(linear_context[index_verb_to_deambiguate-count][0])
+                count+=1
+        except IndexError: break
     linear_context_filtered=linear_context_filtered[::-1] # dans l'ordre c'est mieux
 
     # contexte droit
     count = 1
     while count <= ctx_size:
-        if linear_context[index_verb_to_deambiguate+count][1] not in pos_ignored:
-            linear_context_filtered.append(linear_context[index_verb_to_deambiguate+count][0])
-            count+=1
+        try:
+            if linear_context[index_verb_to_deambiguate+count][1] not in pos_ignored:
+                linear_context_filtered.append(linear_context[index_verb_to_deambiguate+count][0])
+                count+=1
+        except IndexError: break
 
     return linear_context_filtered
 
