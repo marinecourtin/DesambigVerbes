@@ -1,5 +1,36 @@
 import numpy as np
-import argparse, os, glob, re, word2vec
+import argparse, os, glob, re
+
+
+def make_vocab_dico(directory, pos_ignored=['PONCT'], size_vocab=100):
+    """
+    Creates a hashing dictionary token:code and a reverse one code:token
+    Used to vectorize the linear context
+    """
+    conll_files = [fichier for fichier in glob.glob(os.path.join(directory, "*.conll"))]
+    vocab = {"UKNOWN":99999} # adding a fake token will allow us to make predictions for never-encountered context tokens
+
+    for fichier in conll_files:
+
+        for line in open(os.path.join(directory, fichier)):
+
+            motif = re.compile("^(?:\d+)\t([^\t]+)\t[^\t]+\t([^\t]+)\t.+$") # pattern for tokens
+            mappingMatch = re.match(motif, line)
+
+            try:
+                token = mappingMatch.group(1)
+                pos = mappingMatch.group(2)
+                if pos in pos_ignored:continue
+                vocab[token] = vocab.get(token, 0)+1
+
+            except AttributeError:continue
+
+    vocab_freq = sorted(vocab, key=vocab.get, reverse=True)[:size_vocab]
+    dico_code = dict([(tok, idx) for idx, tok in enumerate(vocab_freq)])
+    dico_code_reverse = dict([(idx, tok) for idx, tok in enumerate(vocab_freq)])
+
+    return dico_code, dico_code_reverse
+
 
 
 def load_gold(directory):
@@ -13,8 +44,9 @@ def load_gold(directory):
         - dictionnary with gold output, 3 verbs as keys. For each verb, you can loop through the ids to get
         to the gold class, sentence, and fragment of conll associated with it.
     """
-    gold_files = [fichier for fichier in glob.glob(os.path.join(directory, "abattre*.tab"))]
-    gold_results = {}
+    gold_files = [fichier for fichier in glob.glob(os.path.join(directory, "*.tab"))]
+    gold_results, vocab = {}, {}
+    nb_class = {"aborder":4, "affecter":4, "abattre":5}
 
     for fichier in gold_files:
         num_data, index_conll=0, 0
@@ -23,7 +55,6 @@ def load_gold(directory):
         last_identifiant = None
 
         conll_verb = open("../data_WSD_VS/"+verb+".deep_and_surf.sensetagged.conll").read().split("\n\n")
-        # conll_verb = [instance for instance in conll_verb if re.search("\S", instance)] # we don't want lines with only whitespaces
 
         for line in open(os.path.join(directory, fichier)):
 
@@ -31,12 +62,16 @@ def load_gold(directory):
             mappingMatch = re.match(motif, line)
 
             try:
-                classe_gold = mappingMatch.group(1).split("#")[1]
+                classe_gold = int(mappingMatch.group(1).split("#")[1])
+                classe_gold_one_hot = np.zeros(nb_class[verb])
+                classe_gold_one_hot[classe_gold-1]=1 # switching the class for its one-hot representation because Keras says so
                 identifiant = int(mappingMatch.group(2))
                 phrase = mappingMatch.group(3)
+
                 if identifiant == last_identifiant: # some sentences have several occurences of the verb to disambiguate
                     index_conll-=1 # I also repeated 2 blocs of the conll when the sentences with several occurences didn't follow each other
-                gold_results[verb][num_data]={"classe": classe_gold, "phrase":phrase, "conll":conll_verb[index_conll]}
+
+                gold_results[verb][num_data]={"classe": classe_gold_one_hot, "phrase":phrase, "conll":conll_verb[index_conll]}
                 num_data+=1
                 index_conll+=1
                 last_identifiant = identifiant
@@ -44,6 +79,7 @@ def load_gold(directory):
             except AttributeError: continue #comments
 
     return gold_results
+
 
 
 def divide_data_in_train_test(gold_data, percentage_train=0.8):
@@ -68,7 +104,9 @@ def divide_data_in_train_test(gold_data, percentage_train=0.8):
 
     return train, test
 
-def get_linear_context(bloc_sentence, pos_ignored, ctx_size=2, ):
+
+
+def get_linear_context(bloc_sentence, pos_ignored, ctx_size=2 ):
     """
     Gets a linear context (liste of lemmas) for the verb to disambiguate.
 
@@ -84,11 +122,9 @@ def get_linear_context(bloc_sentence, pos_ignored, ctx_size=2, ):
     try:
         index_verb_to_deambiguate = int(re.search(motif, bloc_sentence).group(1))-1
     except AttributeError: # le mot n'a pas été repéré par sense= ...
-        # une occurence bizarre de "affeterai" en mot-forme et lemme, tout de même prise en compte
-        # print(bloc_sentence)
-        motif_2 = re.compile("^(\d+)\t[^\t]+\t(affecter|aborder|abattre|affeterai)", re.MULTILINE) # TODO modifier le motif (en cours)
+        # 2 cases : word not id by sense= but has a correct lemma, or has incorrect lemma
+        motif_2 = re.compile("^(\d+)\t[^\t]+\t(affecter|aborder|abattre|affeterai)", re.MULTILINE)
         index_verb_to_deambiguate = int(re.search(motif_2, bloc_sentence).group(1))-1
-        # print("===== motif passed yay")
 
     linear_context = []
     for line in bloc_sentence.split("\n"):
@@ -96,7 +132,7 @@ def get_linear_context(bloc_sentence, pos_ignored, ctx_size=2, ):
             index, forme, lemme, upos, xpos, features, idgov, func, misc1, misc2 = line.split("\t")
             linear_context.append((lemme, upos))
         except ValueError:
-            print(line)
+            print(bloc_sentence)
     linear_context_filtered = [] # context is filtered according to the size we passed in the args
 
 
@@ -122,37 +158,64 @@ def get_linear_context(bloc_sentence, pos_ignored, ctx_size=2, ):
     return linear_context_filtered
 
 
-def linear_ctx_2_cbow(linear_context, model):
+
+def linear_ctx_2_one_hot_array(linear_context, dico_code, ctx_size=2):
     """
-    Creates a vectorial representation of the linear context based on a word2vec model
+    Creates a vectorial representation of the linear context. Each token is represented by a one-hot vector.
 
     input :
         - linear_context : list of the lemmas in the context window
-        - model : the word2vec model used the get word embeddings
+        - dico_code : a dictionary associating each token of the vocabulary to its code (UKNOWN words are 0)
 
     output :
-        - the cbow representing the linear context (numpy array)
+        - a numpy array where each context word (2*ctx_size) is coded by a boolean array of size vocab
     """
+    list_arrays = []
+    for lemma in linear_context:
 
-    rep_vec = None
+        rep_lemma = np.zeros(len(dico_code))
+        index = dico_code.get(lemma, 0) #if the word is not in the dictionary it is coded at index 0
+        rep_lemma[index]=1
+        list_arrays.append(rep_lemma)
+
+    rep_vec = np.array(list_arrays, dtype=object)
+    return rep_vec
+
+def linear_ctx_2_cbow(linear_context, dico_code, ctx_size=2):
+    """
+    Creates a vectorial representation of the linear context. The token is represented by one vector (sum of the one hot vectors of the tokens)
+
+    input :
+        - linear_context : list of the lemmas in the context window
+        - dico_code : a dictionary associating each token of the vocabulary to its code (UKNOWN words are 0)
+
+    output :
+        - a numpy array where the context is coded by an array of size vocab
+    """
+    #TODO : see if I want to have this be boolean or freq
+    rep_contexte = np.zeros(len(dico_code))
 
     for lemma in linear_context:
 
-        if isinstance(rep_vec, np.ndarray):
-            rep_vec += model[lemma] # le vecteur a déjà été initialisé
-        else:
-            rep_vec=model[lemma] # on initialise et on type
+        index = dico_code.get(lemma, 0) #if the word is not in the dictionary it is coded at index 0
+        rep_contexte[index]+=1
 
-    return rep_vec
-
+    return rep_contexte
 
 
 
 if __name__ == "__main__":
-    gold_affecter = load_gold("../data_WSD_VS")
-    divide_data_in_train_test(gold_affecter, 0.8)
+    DIR = "../data_WSD_VS"
+    pos_ignored = ['PONCT']
+
+    gold_affecter = load_gold(DIR)
+    # divide_data_in_train_test(gold_affecter, 0.8)
     bloc_sentence = open("../data_WSD_VS/abattre.deep_and_surf.sensetagged.conll").read().split("\n\n")[3]
-    pos_ignored = ['PUNCT']
+    # pos_ignored = ['PUNCT']
     linear_context = get_linear_context(bloc_sentence, pos_ignored)
-    model = word2vec.load("../vecs100-linear-frwiki/data", kind="txt")
-    linear_ctx_2_cbow(linear_context, model)
+    # model = word2vec.load("../vecs100-linear-frwiki/data", kind="txt")
+
+    dico_code, dico_code_reverse = make_vocab_dico(DIR)
+    # print(dico_code_reverse[0])
+    # linear_ctx_2_one_hot_array(linear_context, dico_code)
+    linear_ctx_2_cbow(linear_context, dico_code)
