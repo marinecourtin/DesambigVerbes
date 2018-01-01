@@ -2,7 +2,7 @@ import numpy as np
 import argparse, os, glob, re
 
 
-def make_vocab_dico(directory, pos_ignored=['PONCT'], size_vocab=100):
+def make_vocab_dico(directory, size_vocab=400, pos_ignored=['PONCT']):
     """
     Creates a hashing dictionary token:code and a reverse one code:token
     Used to vectorize the linear context
@@ -171,6 +171,7 @@ def linear_ctx_2_one_hot_array(linear_context, dico_code, ctx_size=2):
         - a numpy array where each context word (2*ctx_size) is coded by a boolean array of size vocab
     """
     list_arrays = []
+
     for lemma in linear_context:
 
         rep_lemma = np.zeros(len(dico_code))
@@ -179,6 +180,7 @@ def linear_ctx_2_one_hot_array(linear_context, dico_code, ctx_size=2):
         list_arrays.append(rep_lemma)
 
     rep_vec = np.array(list_arrays, dtype=object)
+
     return rep_vec
 
 def linear_ctx_2_cbow(linear_context, dico_code, ctx_size=2):
