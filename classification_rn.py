@@ -73,6 +73,9 @@ if __name__ == "__main__":
     NB_EPOCHS = 15
 
     gold_data = read_data.load_gold(GOLD_DIR, CLASSES)
+    train_mfs, test_mfs = read_data.divide_data_in_train_test(gold_data)
+    MFS = read_data.most_frequent_sense(train_mfs, test_mfs)
+
     dico_code, dico_code_reverse = read_data.make_vocab_dico(GOLD_DIR, SIZE_VOCAB)
     train, test = make_dataset(gold_data, dico_code)
     embeddings = code_embeddings(MODEL_FILE, dico_code)
@@ -103,8 +106,6 @@ if __name__ == "__main__":
         checkpoint = ModelCheckpoint("best_weights.hdf5", monitor='val_acc',
                                      verbose=1, save_best_only=True, mode='max')
         callbacks_list = [checkpoint]
-        # print(model.summary())
-        # plot_model(model, show_shapes=True, to_file='model.png')
         model.fit(x_train, y_train, epochs=NB_EPOCHS, callbacks=callbacks_list)
 
         score = model.evaluate(x_test, y_test,
@@ -114,5 +115,6 @@ if __name__ == "__main__":
         # print('Test accuracy:', score[1])
         RESULTS[verb]["loss"] = score[0]
         RESULTS[verb]["accuracy"] = score[1]
+        RESULTS[verb]["mfs"] = MFS.get(verb)
 
     print(RESULTS)

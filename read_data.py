@@ -68,23 +68,22 @@ def load_gold(directory, classes):
 
             try:
                 classe_gold = int(the_match.group(1).split("#")[1])
-                classe_gold_one_hot = np.zeros(classes[verb])
-                classe_gold_one_hot[classe_gold-1] = 1 # switching the class for its one-hot representation because Keras says so
-                identifiant = int(the_match.group(2))
-                phrase = the_match.group(3)
+            except AttributeError: continue # did not match -> comments
 
-                if identifiant == last_identifiant: # some sentences have several occurences of the verb to disambiguate
-                    index_conll -= 1 # I also repeated 2 blocs of the conll when the sentences with several occurences didn't follow each other
+            classe_gold_one_hot = np.zeros(classes[verb])
+            classe_gold_one_hot[classe_gold-1] = 1 # one-hot rep of the class because Keras says so
+            identifiant = int(the_match.group(2))
+            phrase = the_match.group(3)
 
-                gold_results[verb][num_data] = {"classe": classe_gold_one_hot, "phrase":phrase, "conll":conll_verb[index_conll]}
-                num_data += 1
-                index_conll += 1
-                last_identifiant = identifiant
+            if identifiant == last_identifiant: # for some sentences there are several occurences of the verb to disambiguate
+                index_conll -= 1 # + directly changed 2 blocs of the conll when the sentences with several occurences didn't follow each other
 
-            except AttributeError: continue #comments
+            gold_results[verb][num_data] = {"classe": classe_gold_one_hot, "phrase":phrase, "conll":conll_verb[index_conll]}
+            num_data += 1
+            index_conll += 1
+            last_identifiant = identifiant
 
     return gold_results
-
 
 
 def divide_data_in_train_test(gold_data, percentage_train=0.8):
@@ -127,7 +126,7 @@ def get_linear_ctx(bloc_sentence, pos_ignored, ctx_size=2 ):
 
     try:
         index_verb_to_deambiguate = int(re.search(motif, bloc_sentence).group(1))-1
-    except AttributeError: # le mot n'a pas été repéré par sense= ...
+    except AttributeError: # not all occurences are id by sense= ...
         # 2 cases : word not id by sense= but has a correct lemma, or has incorrect lemma
         motif_2 = re.compile("^(\d+)\t[^\t]+\t(affecter|aborder|abattre|affeterai)", re.MULTILINE)
         index_verb_to_deambiguate = int(re.search(motif_2, bloc_sentence).group(1))-1
@@ -135,13 +134,15 @@ def get_linear_ctx(bloc_sentence, pos_ignored, ctx_size=2 ):
     linear_context = []
 
     for line in bloc_sentence.split("\n"):
+
         try:
             index, forme, lemme, upos, xpos, features, idgov, func, misc1, misc2 = line.split("\t")
-            linear_context.append((lemme, upos))
-        except ValueError:
-            print(bloc_sentence)
+        except ValueError: # empty line
+            continue
 
-    linear_context_filtered = [] # context is filtered according to the size we passed in the args
+        linear_context.append((lemme, upos))
+
+    linear_context_filtered = [] # filtered according to the size of ctx window
 
     # contexte gauche
     count = 1
@@ -151,7 +152,7 @@ def get_linear_ctx(bloc_sentence, pos_ignored, ctx_size=2 ):
                 linear_context_filtered.append(linear_context[index_verb_to_deambiguate-count][0])
                 count += 1
         except IndexError: break
-    linear_context_filtered = linear_context_filtered[::-1] # dans l'ordre c'est mieux
+    linear_context_filtered = linear_context_filtered[::-1] # get right order back
 
     # contexte droit
     count = 1
@@ -186,7 +187,7 @@ def linear_ctx_2_one_hot_array(linear_context, dico_code, ctx_size=2):
     for lemma in linear_context:
 
         rep_lemma = np.zeros(len(dico_code))
-        index = dico_code.get(lemma, 0) #if the word is not in the dictionary it is coded at index 0
+        index = dico_code.get(lemma, 0)
         rep_lemma[index] = 1
         list_arrays.append(rep_lemma)
 
@@ -211,7 +212,7 @@ def linear_ctx_2_cbow(linear_context, dico_code, ctx_size=2):
 
     for lemma in linear_context:
 
-        index = dico_code.get(lemma, 0) #if the word is not in the dictionary it is coded at index 0
+        index = dico_code.get(lemma, 0) # word not in the dico is coded at index 0
         rep_ctx[index] += 1
 
     return rep_ctx
@@ -232,6 +233,7 @@ def most_frequent_sense(train, test):
 
     for verb in train:
         MFS[verb] = {}
+
         for occ in train[verb]:
             classe_vec = train[verb][occ]["classe"] # 0100
             sense = np.argmax(classe_vec)+1 # sense n°2
@@ -241,14 +243,17 @@ def most_frequent_sense(train, test):
 
     for verb in test:
         accuracy=[]
+
         for occ in test[verb]:
             classe_vec = test[verb][occ]["classe"]
             sense = np.argmax(classe_vec)+1
             accuracy.append(sense == MFS.get(verb))
+
         accuracy = sum(accuracy)/len(accuracy)
         results[verb]=accuracy
 
     return results
+
 
 if __name__ == "__main__":
     GOLD_DIR = "../data_WSD_VS"
