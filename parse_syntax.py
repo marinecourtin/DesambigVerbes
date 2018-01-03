@@ -1,5 +1,5 @@
-import read_data
 import re
+import read_data
 
 
 GOLD_DIR = "../data_WSD_VS"
@@ -13,6 +13,7 @@ train, test = read_data.divide_data_in_train_test(gold_data)
 
 # TODO : ADDING SURFACE SYNTAX
 # TODO : pleurer sur les coordinations méchantes qui cachent mes beaux sujets
+# TODO : code and pad the data ....
 
 def make_dataset_syntax(dico):
     """
@@ -22,6 +23,7 @@ def make_dataset_syntax(dico):
     datasets = {}
 
     for verb in dico:
+        len_max = 0 # we'll use this to pad the dataset so that the input always has the same shape
         datasets[verb] = []
 
         for bloc in dico[verb]:
@@ -32,7 +34,6 @@ def make_dataset_syntax(dico):
 
             try:
                 str_index_verb = re.search(motif, bloc_sentence).group(1)
-
             except AttributeError:
                 motif_2 = re.compile("^(\d+)\t[^\t]+\t(affecter|aborder|abattre|affeterai)", re.MULTILINE)
                 str_index_verb = re.search(motif_2, bloc_sentence).group(1)
@@ -47,52 +48,46 @@ def make_dataset_syntax(dico):
             results.append(diathese)
 
             motif_dep = re.compile("([^\t])+\t[^\t]+\t([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t%s(?:\|(\d+))?\t([^\t]+)\t[^\t]" % str_index_verb, re.MULTILINE)
-
-
             try:
                 dep = re.search(motif_dep, bloc_sentence).groups()
-            except AttributeError:
-                dep = None
-
-            if dep:
-                index, lemma_dep, pos_dep, second_gov_dep, rel_dep = dep
-                motif_sub_dep = re.compile("^([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t%s(?:\|(\d+))?\t([^\t]+)\t[^\t]" % index, re.MULTILINE)
-
-                if pos_dep == "PONCT": continue
-
-                for elt in rel_dep.split("|"):
-                    niveau = elt[0]
-
-                    if niveau == "I":continue # arg et comp on s'en occupe pas
-                    if niveau != "S" and niveau != "D":
-                        niveau = "S&D"
-
-                    rel_synt = elt.split(":")[-1] # relation canonique TODO verifier
-                    results.append([niveau, rel_synt, lemma_dep, pos_dep])
-
-                    if "mod" in rel_synt:
-                        if pos_dep == "P":
-
-                            try:
-                                index_mod, lemma_mod, pos_mod, second_gov_mod, rel_mod = re.search(motif_sub_dep, bloc_sentence).groups()
-                            except AttributeError: # probably due to multiple govenors 1|14|31
-                                continue
-
-                            rel_mod = rel_mod.split("|")
-
-                            for elt in rel_mod:
-                                niveau = elt[0]
-                                if niveau == "I":continue
-                                if niveau != "S" and niveau != "D":
-                                    niveau = "S&D"
-
-                                rel_synt = elt.split(":")[-1] # relation canonique TODO verifier
-                                results.append([niveau, rel_synt, lemma_mod, pos_mod])
-            else:
+            except AttributeError: # no dependants for this verb
                 results.append(None)
+                continue
+
+            index, lemma_dep, pos_dep, second_gov_dep, rel_dep = dep
+            motif_sub_dep = re.compile("^([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t%s(?:\|(\d+))?\t([^\t]+)\t[^\t]" % index, re.MULTILINE)
+
+            if pos_dep == "PONCT": continue
+
+            for elt in rel_dep.split("|"):
+
+                niveau = elt[0]
+                if niveau == "I": continue # arg et comp on s'en occupe pas
+                if niveau != "S" and niveau != "D": niveau = "S&D"
+                rel_synt = elt.split(":")[-1] # relation canonique TODO verifier
+                results.append([niveau, rel_synt, lemma_dep, pos_dep])
+
+                if "mod" in rel_synt and pos_dep == "P": # going further down the tree for modifiers which are prep
+
+                    try:
+                        index_mod, lemma_mod, pos_mod, second_gov_mod, rel_mod = re.search(motif_sub_dep, bloc_sentence).groups()
+                    except AttributeError: continue # probably due to multiple govenors 1|14|31 TODO fix if I have time
+
+                    rel_mod = rel_mod.split("|")
+
+                    for elt in rel_mod:
+                        niveau = elt[0]
+                        if niveau == "I": continue
+                        if niveau != "S" and niveau != "D": niveau = "S&D"
+                        rel_synt = elt.split(":")[-1] # relation canonique TODO verifier
+                        results.append([niveau, rel_synt, lemma_mod, pos_mod])
+
             datasets[verb].append(results)
+            if len(results) > len_max:
+                len_max = len(results)
+        print(verb, len_max)
 
     return datasets
 
-train, test = make_dataset_syntax(train), make_dataset_syntax(test)
-print(test)
+if __name__ == "__main__":
+    train, test = make_dataset_syntax(train), make_dataset_syntax(test)
