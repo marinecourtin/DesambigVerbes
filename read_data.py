@@ -222,31 +222,41 @@ def most_frequent_sense(train, test):
     Computes the baseline results of the MFS for each verb
 
     input :
-        - train, tests : 2 dictionaries with the occurences and their class
+        - train, tests : 2 dico with the occurences and their class
 
     output :
-        - the accuracy of MFS for each verb
+        - dico w/ the accuracy of MFS for each verb
     """
-    # TODO : find way to keep the train/test divide made for classification_rn
     MFS = {}
+    results = {}
+
     for verb in train:
-        # print(train[verb])
         MFS[verb] = {}
         for occ in train[verb]:
-            classe = train[verb][occ]["classe"]
-            print(train[verb][occ]["classe"])
-            MFS[verb]
-    #     MFS[verb]={}
-    #     classe = train[verb]["classe"]
-    #     MFS[verb][classe]=MFS[verb].get(classe, 0)+1
-    # print(MFS)
+            classe_vec = train[verb][occ]["classe"] # 0100
+            sense = np.argmax(classe_vec)+1 # sense n°2
+            MFS[verb][sense]=MFS[verb].get(sense, 0)+1
+
+    MFS = dict([(verb, sorted(MFS[verb], key=MFS[verb].get, reverse=True)[0]) for verb in MFS])
+
+    for verb in test:
+        accuracy=[]
+        for occ in test[verb]:
+            classe_vec = test[verb][occ]["classe"]
+            sense = np.argmax(classe_vec)+1
+            accuracy.append(sense == MFS.get(verb))
+        accuracy = sum(accuracy)/len(accuracy)
+        results[verb]=accuracy
+
+    return results
 
 if __name__ == "__main__":
     GOLD_DIR = "../data_WSD_VS"
+    CLASSES = {"aborder":4, "affecter":4, "abattre":5}
 
     SIZE_VOCAB = 400
 
-    gold_data = load_gold(GOLD_DIR)
+    gold_data = load_gold(GOLD_DIR, CLASSES)
     dico_code, dico_code_reverse = make_vocab_dico(GOLD_DIR, SIZE_VOCAB)
     train, test = divide_data_in_train_test(gold_data)
     most_frequent_sense(train, test)
