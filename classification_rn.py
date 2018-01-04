@@ -80,15 +80,17 @@ if __name__ == "__main__":
 
     dico_code, dico_code_reverse = read_data.make_vocab_dico(GOLD_DIR, SIZE_VOCAB)
     # LINEAR
-    train, test = make_dataset(gold_data, dico_code)
+    # train, test = make_dataset(gold_data, dico_code)
     # print(train)
 
-    # SYNTACTIC
+    # SYNTACTIC # TODO : check why the format isn't working with the classifier
     train, test = read_data.divide_data_in_train_test(gold_data)
     train, dico_code= parse_syntax.make_dataset_syntax(train, dico_code)
     test = parse_syntax.make_dataset_syntax(test, dico_code, False)
     train = parse_syntax.normalise_dataset_syntactic_contexte(train, dico_code)
     test = parse_syntax.normalise_dataset_syntactic_contexte(test, dico_code)
+
+    SIZE_VOCAB = len(dico_code) # updating for syntactic mode
 
     # EMBEDDINGS
     embeddings = code_embeddings(MODEL_FILE, dico_code)
@@ -97,7 +99,6 @@ if __name__ == "__main__":
 
         RESULTS[verb] = {}
         nb_neuron_output = CLASSES.get(verb)
-
 
         x_train, y_train = train[verb]
         x_test, y_test = test[verb]

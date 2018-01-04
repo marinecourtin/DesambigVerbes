@@ -51,7 +51,7 @@ def make_dataset_syntax(dico, vocab,training=True):
             diat = re.search(motif_diat, bloc_sentence)
 
             try:
-                diathese = diat.group(1)
+                diathese = "diathese="+diat.group(1)
             except AttributeError:
                 diathese = "diathese=False"
             results.append(diathese)
@@ -137,7 +137,7 @@ def normalise_dataset_syntactic_contexte(dataset, vocab):
             y_data.append(dataset[verb][i][1])
             x_data.append(rep_vec)
 
-        output[verb]=[x_data, y_data]
+        output[verb]=[np.array(x_data), np.array(y_data)]
         # print(len(output[verb]))
 
     return output
