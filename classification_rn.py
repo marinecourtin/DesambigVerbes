@@ -9,6 +9,8 @@ from keras.layers import Dense, Embedding, Flatten, Dropout
 from keras.utils import plot_model
 from keras.callbacks import ModelCheckpoint
 
+import parse_syntax
+
 
 def make_dataset(gold, vocab_code, train_p=0.8, mode="linear", pos_ignored=['PUNCT'], ctx_size=2):
     """
@@ -77,7 +79,18 @@ if __name__ == "__main__":
     MFS = read_data.most_frequent_sense(train_mfs, test_mfs)
 
     dico_code, dico_code_reverse = read_data.make_vocab_dico(GOLD_DIR, SIZE_VOCAB)
+    # LINEAR
     train, test = make_dataset(gold_data, dico_code)
+    # print(train)
+
+    # SYNTACTIC
+    train, test = read_data.divide_data_in_train_test(gold_data)
+    train, dico_code= parse_syntax.make_dataset_syntax(train, dico_code)
+    test = parse_syntax.make_dataset_syntax(test, dico_code, False)
+    train = parse_syntax.normalise_dataset_syntactic_contexte(train, dico_code)
+    test = parse_syntax.normalise_dataset_syntactic_contexte(test, dico_code)
+
+    # EMBEDDINGS
     embeddings = code_embeddings(MODEL_FILE, dico_code)
 
     for verb in ["abattre", "affecter", "aborder"]:
@@ -85,10 +98,11 @@ if __name__ == "__main__":
         RESULTS[verb] = {}
         nb_neuron_output = CLASSES.get(verb)
 
+
         x_train, y_train = train[verb]
         x_test, y_test = test[verb]
 
-        # read_data.linear_ctx_2_cbow(linear_context, model)
+
         # TEST avec CBOW
         model = Sequential()
         if use_word_embeddings:
@@ -110,9 +124,7 @@ if __name__ == "__main__":
 
         score = model.evaluate(x_test, y_test,
                                batch_size=1, verbose=1)
-        print("\n", score)
-        # print('Test score:', score[0])
-        # print('Test accuracy:', score[1])
+
         RESULTS[verb]["loss"] = score[0]
         RESULTS[verb]["accuracy"] = score[1]
         RESULTS[verb]["mfs"] = MFS.get(verb)

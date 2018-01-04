@@ -110,7 +110,7 @@ def divide_data_in_train_test(gold_data, percentage_train=0.8):
 
 
 
-def get_linear_ctx(bloc_sentence, pos_ignored, ctx_size=2 ):
+def get_linear_ctx(bloc_sentence, pos_ignored=["PUNCT"], ctx_size=2 ):
     """
     Gets a linear context (liste of lemmas) for the verb to disambiguate.
 
@@ -137,6 +137,7 @@ def get_linear_ctx(bloc_sentence, pos_ignored, ctx_size=2 ):
 
         try:
             index, forme, lemme, upos, xpos, features, idgov, func, misc1, misc2 = line.split("\t")
+            # print(features)
         except ValueError: # empty line
             continue
 
@@ -264,4 +265,8 @@ if __name__ == "__main__":
     gold_data = load_gold(GOLD_DIR, CLASSES)
     dico_code, dico_code_reverse = make_vocab_dico(GOLD_DIR, SIZE_VOCAB)
     train, test = divide_data_in_train_test(gold_data)
-    most_frequent_sense(train, test)
+
+    # TODO : ADDING SURFACE SYNTAX
+    bloc_sentence = train["affecter"][190]["conll"]
+    print(bloc_sentence)
+    # most_frequent_sense(train, test)
