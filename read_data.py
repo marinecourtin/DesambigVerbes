@@ -137,11 +137,9 @@ def get_linear_ctx(bloc_sentence, pos_ignored=["PUNCT"], ctx_size=2 ):
 
         try:
             index, forme, lemme, upos, xpos, features, idgov, func, misc1, misc2 = line.split("\t")
-            # print(features)
+            linear_context.append((lemme, upos))
         except ValueError: # empty line
             continue
-
-        linear_context.append((lemme, upos))
 
     linear_context_filtered = [] # filtered according to the size of ctx window
 
@@ -229,8 +227,7 @@ def most_frequent_sense(train, test):
     output :
         - dico w/ the accuracy of MFS for each verb
     """
-    MFS = {}
-    results = {}
+    MFS, results= {}, {}
 
     for verb in train:
         MFS[verb] = {}
@@ -268,5 +265,3 @@ if __name__ == "__main__":
 
     # TODO : ADDING SURFACE SYNTAX
     bloc_sentence = train["affecter"][190]["conll"]
-    print(bloc_sentence)
-    # most_frequent_sense(train, test)
