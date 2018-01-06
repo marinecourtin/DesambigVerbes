@@ -10,7 +10,6 @@ from keras.layers import Dense, Embedding, Flatten, Dropout, Merge
 from keras.utils import plot_model
 from keras.callbacks import ModelCheckpoint
 
-import parse_syntax
 
 
 # TODO : virer ça et corriger les trucs qui provoquent des warnings
