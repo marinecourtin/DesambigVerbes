@@ -12,6 +12,11 @@ from keras.callbacks import ModelCheckpoint
 
 import parse_syntax
 
+
+# TODO : virer ça et corriger les trucs qui provoquent des warnings
+import warnings
+warnings.filterwarnings("ignore")
+
 class LackRessource(Exception):
     pass
 
@@ -111,12 +116,14 @@ class TrainingSession(object):
         """
         model_embeddings = word2vec.load(self.model_file, kind="txt")
         list_arrays = []
+
         for word in self.vocab:
             try:
                 list_arrays.append(model_embeddings[word])
             except KeyError:
                 list_arrays.append(np.zeros(100))
         embeddings = np.array(list_arrays, dtype=object)
+
         return embeddings
 
     def run_one_session(self):
@@ -130,9 +137,10 @@ class TrainingSession(object):
         MFS = self.find_mfs()
         size_vocab = len(self.vocab)
         train, test = self.get_linear_dataset()
+        embeddings = self.code_embeddings()
 
         for verb in self.classes:
-            print(verb)
+
             nb_neuron_output = self.classes.get(verb)
             x_linear_train, y_linear_train = train[verb]
             x_linear_test, y_linear_test = test[verb]
@@ -142,7 +150,7 @@ class TrainingSession(object):
 
             if self.use_embeddings: # we use the linear context in both modes
                 left_branch.add(Embedding(size_vocab, 100, input_shape=(size_vocab,),
-                                          weights=[self.code_embeddings()], trainable=self.update_weights))
+                                          weights=[embeddings], trainable=self.update_weights))
             else:
                 left_branch.add(Embedding(size_vocab, 100, input_shape=(size_vocab,),
                                                 trainable=self.update_weights))
