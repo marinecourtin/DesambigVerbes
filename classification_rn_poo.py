@@ -144,7 +144,6 @@ class TrainingSession(object):
                 try:
                     dep = re.search(motif_dep, bloc_sentence).groups()
                 except AttributeError: # no dependants for this verb
-                    # TODO : voir ce qu'il faut faire dans ce cas
                     results.append("dep=False")
                     info_to_encode["dep=False"] = info_to_encode.get("dep=False", 0)+1
 
@@ -159,20 +158,17 @@ class TrainingSession(object):
                     if niveau != "S" and niveau != "D": niveau = "S&D"
                     rel_synt = elt.split(":")[-1] # relation canonique TODO verifier
 
-                    results.extend([niveau, rel_synt, lemma_dep, pos_dep])
+                    if self.mode == "surface_s" and (niveau == "S&D" or niveau == "S"):
+                        results.extend([niveau, rel_synt, lemma_dep, pos_dep])
+
+                    elif self.mode == "deep_s" and (niveau == "S&D" or niveau == "D"):
+                        results.extend([niveau, rel_synt, lemma_dep, pos_dep])
 
                     for info in [niveau, rel_synt, pos_dep]:
                         info_to_encode[info]=info_to_encode.get(info, 0)+1
 
                     if "mod" in rel_synt and pos_dep == "P": # going further down the tree for modifiers which are prep
-                        if not re.search(motif_sub_dep, bloc_sentence):
-                            print(index, "\n", bloc_sentence)
-                        try:
-                            index_mod, lemma_mod, pos_mod, rel_mod = re.search(motif_sub_dep, bloc_sentence).groups()
-                        except AttributeError:
-                            count+=1
-                            # print(re.search("^([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t(?:\d+\|)*%s(?:\|\d+)*\t([^\t]+)\t[^\t]" % index_mod, bloc_sentence, re.MULTILINE))
-                            continue # probably due to multiple govenors 1|14|31 TODO fix if I have time
+                        index_mod, lemma_mod, pos_mod, rel_mod = re.search(motif_sub_dep, bloc_sentence).groups()
 
                         rel_mod = rel_mod.split("|")
 
@@ -186,10 +182,10 @@ class TrainingSession(object):
 
                             for info in [niveau, rel_synt, pos_mod]:
                                 info_to_encode[info] = info_to_encode.get(info, 0)+1
-                datasets[verb].append([results, classe])
-            print("attendu", verb, len(dico[verb]), "count", count)
 
-        if training:
+                datasets[verb].append([results, classe])
+
+        if training: # create a feature dictionary
             begin = len(self.vocab)
             self.features = dict(self.vocab) # we don't want our vocab to be updated
             feats_freq = sorted(info_to_encode, key=info_to_encode.get, reverse=True)
@@ -288,12 +284,13 @@ class TrainingSession(object):
                                                 trainable=self.update_weights))
             self.left_branch.add(Flatten())
             self.left_branch.add(Dense(140, activation='tanh'))
-            self.left_branch.add(Dropout(0.2))
+            dropout=0.2
+            self.left_branch.add(Dropout(dropout))
 
             if self.mode == "linear": # if the mode is linear, there is no other input
                 self.model = self.left_branch
 
-            elif self.mode == "syntactic":
+            elif self.mode == "deep_s" or self.mode == "surface_s":
                 syntactic_dataset = self.get_syntactic_dataset()
                 nb_features = len(self.features)
                 x_syntactic_train, y_syntactic_train = syntactic_dataset[0][verb]
@@ -311,8 +308,8 @@ class TrainingSession(object):
             self.model.add(Dense(nb_neuron_output, activation='softmax'))
             self.model.compile(optimizer='adam', loss='categorical_crossentropy',
                           metrics=['accuracy'])
-            checkpoint = ModelCheckpoint("best_weights.hdf5", monitor='val_acc',
-                                         verbose=1, save_best_only=True, mode='max')
+            checkpoint = ModelCheckpoint("best_weights.hdf5", monitor='val_loss',
+                                         verbose=1, save_best_only=True, mode='min')
             callbacks_list = [checkpoint]
             self.model.summary()
 
@@ -320,7 +317,7 @@ class TrainingSession(object):
                 self.model.fit(x_linear_train, y_linear_train, epochs=self.nb_epochs, callbacks=callbacks_list)
                 score = self.model.evaluate(x_linear_test, y_linear_test,
                                        batch_size=1, verbose=1)
-            elif self.mode == "syntactic":
+            elif self.mode == "deep_s" or self.mode == "surface_s":
                 self.model.fit([x_linear_train, x_syntactic_train], y_linear_train, epochs=self.nb_epochs, callbacks=callbacks_list)
                 score = self.model.evaluate([x_linear_test, x_syntactic_test], y_linear_test,
                                        batch_size=1, verbose=1)
@@ -328,11 +325,10 @@ class TrainingSession(object):
             self.results[verb]["loss"], self.results[verb]["accuracy"] = score
             self.results[verb]["mfs"] = MFS.get(verb)
 
-# TODO : faire en sorte qu'il y ait un partage des arguments de la session avec read_data et parse_syntax pour chaque fonction qui le requière (use attrbutes ? import class ?)
-
 if __name__ == "__main__":
 
-    T_1 = TrainingSession("syntactic", 0.8, 15, 400, True, True, 2)
+    T_1 = TrainingSession("deep_s", 0.8, 15, 400, True, True, 2)
     T_1.run_one_session()
     plot_model(T_1.model, to_file='model.png', show_shapes=True)
+    print(T_1.mode, T_1.train_p, T_1.nb_epochs, T_1.size_vocab, T_1.use_embeddings, T_1.update_weights, T_1.ctx_size, "dropout=0.2")
     print(T_1.results)
