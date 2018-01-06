@@ -1,6 +1,7 @@
 """This module builds the neural networks aimed at desambiguating
 occurences of the verbs in context."""
 
+import re
 import read_data
 import word2vec
 import numpy as np
@@ -8,7 +9,6 @@ from keras.models import Sequential
 from keras.layers import Dense, Embedding, Flatten, Dropout, Merge
 from keras.utils import plot_model
 from keras.callbacks import ModelCheckpoint
-# from keras.layers.merge
 
 import parse_syntax
 
@@ -97,16 +97,143 @@ class TrainingSession(object):
 
         return train, test
 
+    def make_dataset_syntax(self, dico, training):
+        """
+        Transforms a gold dictionary (train or test) into the dataset to train the NN with syntactic contexts (Surface and Deep).
+        Also updates the dictionaries to encode PoS, syntactic relations, voice(diathèse) as well as lemmas.
+
+        input :
+            - dictionary with gold data
+            - dictionaries containing the correspondencies feature <=> code
+
+        output :
+            - dataset for each verb [[voice, syn_level_1, syn_rel_1, lemma_1, pos_1, syn_level_2...], [classe]] (1+4 features by dependency)
+        """
+        datasets = {}
+        info_to_encode = {}
+        vocab = self.vocab
+        for verb in dico:
+            datasets[verb] = []
+
+            for bloc in dico[verb]:
+
+                results = []
+                bloc_sentence = dico[verb][bloc]["conll"]
+                classe = dico[verb][bloc]["classe"]
+                motif = re.compile("^(?:(\d+)\t)(?:.+?(?:diat=(.+?)\|[^\t]*)?sense=(?:.+?)\|)", re.MULTILINE)
+
+                try:
+                    str_index_verb = re.search(motif, bloc_sentence).group(1)
+                except AttributeError:
+                    motif_2 = re.compile("^(\d+)\t[^\t]+\t(affecter|aborder|abattre|affeterai)", re.MULTILINE)
+                    str_index_verb = re.search(motif_2, bloc_sentence).group(1)
+
+                motif_diat = re.compile("^%s(?:\t[^\t]+){4}\tdiat=([^\t\|]+)" % str_index_verb, re.MULTILINE)
+                diat = re.search(motif_diat, bloc_sentence)
+
+                try:
+                    diathese = "diathese="+diat.group(1)
+                except AttributeError:
+                    diathese = "diathese=False"
+                results.append(diathese)
+
+                info_to_encode[diathese]=info_to_encode.get(diathese, 0)+1
+                # if diathese == "diathese=False":
+                #     print(info_to_encode[diathese])
+                motif_dep = re.compile("([^\t])+\t[^\t]+\t([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t%s(?:\|(\d+))?\t([^\t]+)\t[^\t]" % str_index_verb, re.MULTILINE)
+                try:
+                    dep = re.search(motif_dep, bloc_sentence).groups()
+                except AttributeError: # no dependants for this verb
+                    results.append(None)
+                    continue
+
+                index, lemma_dep, pos_dep, second_gov_dep, rel_dep = dep
+                motif_sub_dep = re.compile("^([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t%s(?:\|(\d+))?\t([^\t]+)\t[^\t]" % index, re.MULTILINE)
+
+                if pos_dep == "PONCT": continue
+
+                for elt in rel_dep.split("|"):
+
+                    niveau = elt[0]
+                    if niveau == "I": continue # arg et comp on s'en occupe pas
+                    if niveau != "S" and niveau != "D": niveau = "S&D"
+                    rel_synt = elt.split(":")[-1] # relation canonique TODO verifier
+                    # results.append([niveau, rel_synt, lemma_dep, pos_dep])
+                    results.extend([niveau, rel_synt, lemma_dep, pos_dep])
+
+                    for info in [niveau, rel_synt, pos_dep]:
+                        info_to_encode[info]=info_to_encode.get(info, 0)+1
+
+                    if "mod" in rel_synt and pos_dep == "P": # going further down the tree for modifiers which are prep
+
+                        try:
+                            index_mod, lemma_mod, pos_mod, second_gov_mod, rel_mod = re.search(motif_sub_dep, bloc_sentence).groups()
+                        except AttributeError: continue # probably due to multiple govenors 1|14|31 TODO fix if I have time
+
+                        rel_mod = rel_mod.split("|")
+
+                        for elt in rel_mod:
+                            niveau = elt[0]
+                            if niveau == "I": continue
+                            if niveau != "S" and niveau != "D": niveau = "S&D"
+                            rel_synt = elt.split(":")[-1] # relation canonique TODO verifier
+                            # results.append([niveau, rel_synt, lemma_mod, pos_mod])
+                            results.extend([niveau, rel_synt, lemma_mod, pos_mod])
+
+                            for info in [niveau, rel_synt, pos_mod]:
+                                info_to_encode[info] = info_to_encode.get(info, 0)+1
+
+                datasets[verb].append([results, classe])
+
+        if training:
+            begin = len(self.vocab)
+            self.features = dict(self.vocab) # we don't want our vocab to be updated
+            feats_freq = sorted(info_to_encode, key=info_to_encode.get, reverse=True)
+            self.features.update(dict([(tok, idx+begin) for idx, tok in enumerate(feats_freq)]))
+        return datasets
+
+    def normalise_dataset_syntactic_contexte(self, dataset):
+        """
+        Replaces the string values of features with integers in a fixed hashing space.
+
+        input:
+            - the dataset w
+        """
+
+        nb_dimensions = len(self.features)
+        output = {}
+        for verb in dataset:
+            x_data, y_data = [], []
+
+            for i in range(len(dataset[verb])):
+
+                length = len(dataset[verb][i][0]) # nb of features for a given occurence
+                rep_vec = np.zeros(nb_dimensions)
+
+                for j in range(length):
+                    feature = dataset[verb][i][0][j]
+                    index = self.features.get(feature, 0)
+                    rep_vec[index] += 1
+
+                y_data.append(dataset[verb][i][1])
+                x_data.append(rep_vec)
+
+            output[verb]=[np.array(x_data), np.array(y_data)]
+
+        return output
+
     def get_syntactic_dataset(self):
         """
         Creates the dataset for training the network on syntactic data.
         """
-        divided_data = read_data.divide_data_in_train_test(self.gold_data)
-        train_data, features_dico = parse_syntax.make_dataset_syntax(divided_data[0], self.vocab)
-        self.nb_features = len(features_dico)
-        test_data = parse_syntax.make_dataset_syntax(divided_data[1], self.vocab, False) # TODO : verifier que c'est bien self.vocab
-        train_normalised_dataset = parse_syntax.normalise_dataset_syntactic_contexte(train_data, features_dico)
-        test_normalised_dataset = parse_syntax.normalise_dataset_syntactic_contexte(test_data, features_dico)
+        train, test= read_data.divide_data_in_train_test(self.gold_data)
+
+        train_data = self.make_dataset_syntax(train, True)
+        test_data = self.make_dataset_syntax(test, False) # TODO : verifier que c'est bien self.vocab
+
+        train_normalised_dataset = self.normalise_dataset_syntactic_contexte(train_data)
+        test_normalised_dataset = self.normalise_dataset_syntactic_contexte(test_data)
+
         return train_normalised_dataset, test_normalised_dataset
 
     def code_embeddings(self):
@@ -163,6 +290,7 @@ class TrainingSession(object):
 
             elif self.mode == "syntactic":
                 syntactic_dataset = self.get_syntactic_dataset()
+                nb_features = len(self.features)
                 x_syntactic_train, y_syntactic_train = syntactic_dataset[0][verb]
                 x_syntactic_test, y_syntactic_test = syntactic_dataset[1][verb]
 
@@ -172,18 +300,12 @@ class TrainingSession(object):
                 x_linear_test = x_linear_test[:len(x_syntactic_test)]
                 y_linear_test = y_linear_test[:len(y_syntactic_test)]
 
-
-                # print(len(x_linear_train), len(y_linear_train), len(x_linear_test), len(y_linear_test))
-                # print(len(x_syntactic_train), len(y_syntactic_train), len(x_syntactic_test), len(y_syntactic_test))
                 right_branch = Sequential()
 
                 # adding 2nd input based on syntactic features
-                print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-                # print(self.nb_features)
-                right_branch.add(Embedding(self.nb_features, 100, input_shape=(self.nb_features,)))
+                right_branch.add(Embedding(nb_features, 100, input_shape=(nb_features,)))
                 right_branch.add(Flatten())
                 right_branch.add(Dense(80, activation="tanh"))
-                print(left_branch.output_shape, right_branch.output_shape)
                 merged = Merge([left_branch, right_branch], mode="concat")
                 model.add(merged)
 
@@ -213,6 +335,6 @@ class TrainingSession(object):
 # TODO : faire en sorte qu'il y ait un partage des arguments de la session avec read_data et parse_syntax pour chaque fonction qui le requière (use attrbutes ? import class ?)
 
 if __name__ == "__main__":
-
-    T_1 = TrainingSession("syntactic", 0.8, 15, 400, True, True, 2)
+    # nb_epochs = 15
+    T_1 = TrainingSession("syntactic", 0.8, 3, 400, True, True, 2)
     T_1.run_one_session()
