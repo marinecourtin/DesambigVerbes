@@ -22,7 +22,7 @@ class LackRessource(Exception):
 
 class TrainingSession(object):
 
-    dir = "../data_WSD_VS"
+    dir = "../data_WSD_VS" # TODO : remettre vrai dossier
     model_file = "../vecs100-linear-frwiki/data"
     classes = {"aborder":4, "affecter":4, "abattre":5}
     pos_ignored = ['PUNCT']
@@ -109,13 +109,13 @@ class TrainingSession(object):
         output :
             - dataset for each verb [[voice, syn_level_1, syn_rel_1, lemma_1, pos_1, syn_level_2...], [classe]] (1+4 features by dependency)
         """
-        datasets = {}
-        info_to_encode = {}
+        datasets, info_to_encode = {}, {}
         vocab = self.vocab
         for verb in dico:
+            count = 0
             datasets[verb] = []
 
-            for bloc in dico[verb]:
+            for bloc in dico[verb]: # 177
 
                 results = []
                 bloc_sentence = dico[verb][bloc]["conll"]
@@ -137,38 +137,42 @@ class TrainingSession(object):
                     diathese = "diathese=False"
                 results.append(diathese)
 
+
                 info_to_encode[diathese]=info_to_encode.get(diathese, 0)+1
-                # if diathese == "diathese=False":
-                #     print(info_to_encode[diathese])
-                motif_dep = re.compile("([^\t])+\t[^\t]+\t([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t%s(?:\|(\d+))?\t([^\t]+)\t[^\t]" % str_index_verb, re.MULTILINE)
+                motif_dep = re.compile("^(\d+)\t[^\t]+\t([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t(?:\d+\|)*%s(?:\|\d+)*\t([^\t]+)\t[^\t]" % str_index_verb, re.MULTILINE)
+
                 try:
                     dep = re.search(motif_dep, bloc_sentence).groups()
                 except AttributeError: # no dependants for this verb
-                    results.append(None)
-                    continue
+                    # TODO : voir ce qu'il faut faire dans ce cas
+                    results.append("dep=False")
+                    info_to_encode["dep=False"] = info_to_encode.get("dep=False", 0)+1
 
-                index, lemma_dep, pos_dep, second_gov_dep, rel_dep = dep
-                motif_sub_dep = re.compile("^([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t%s(?:\|(\d+))?\t([^\t]+)\t[^\t]" % index, re.MULTILINE)
+                index, lemma_dep, pos_dep, rel_dep = dep
+                motif_sub_dep = re.compile("^(\d+)\t[^\t]+\t([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t(?:\d+\|)*%s(?:\|\d+)*\t([^\t]+)\t[^\t]" % index, re.MULTILINE)
 
-                if pos_dep == "PONCT": continue
-
+                # TODO : si je veux filtrer sur les pos
                 for elt in rel_dep.split("|"):
 
                     niveau = elt[0]
                     if niveau == "I": continue # arg et comp on s'en occupe pas
                     if niveau != "S" and niveau != "D": niveau = "S&D"
                     rel_synt = elt.split(":")[-1] # relation canonique TODO verifier
-                    # results.append([niveau, rel_synt, lemma_dep, pos_dep])
+
                     results.extend([niveau, rel_synt, lemma_dep, pos_dep])
 
                     for info in [niveau, rel_synt, pos_dep]:
                         info_to_encode[info]=info_to_encode.get(info, 0)+1
 
                     if "mod" in rel_synt and pos_dep == "P": # going further down the tree for modifiers which are prep
-
+                        if not re.search(motif_sub_dep, bloc_sentence):
+                            print(index, "\n", bloc_sentence)
                         try:
-                            index_mod, lemma_mod, pos_mod, second_gov_mod, rel_mod = re.search(motif_sub_dep, bloc_sentence).groups()
-                        except AttributeError: continue # probably due to multiple govenors 1|14|31 TODO fix if I have time
+                            index_mod, lemma_mod, pos_mod, rel_mod = re.search(motif_sub_dep, bloc_sentence).groups()
+                        except AttributeError:
+                            count+=1
+                            # print(re.search("^([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t(?:\d+\|)*%s(?:\|\d+)*\t([^\t]+)\t[^\t]" % index_mod, bloc_sentence, re.MULTILINE))
+                            continue # probably due to multiple govenors 1|14|31 TODO fix if I have time
 
                         rel_mod = rel_mod.split("|")
 
@@ -177,19 +181,20 @@ class TrainingSession(object):
                             if niveau == "I": continue
                             if niveau != "S" and niveau != "D": niveau = "S&D"
                             rel_synt = elt.split(":")[-1] # relation canonique TODO verifier
-                            # results.append([niveau, rel_synt, lemma_mod, pos_mod])
+
                             results.extend([niveau, rel_synt, lemma_mod, pos_mod])
 
                             for info in [niveau, rel_synt, pos_mod]:
                                 info_to_encode[info] = info_to_encode.get(info, 0)+1
-
                 datasets[verb].append([results, classe])
+            print("attendu", verb, len(dico[verb]), "count", count)
 
         if training:
             begin = len(self.vocab)
             self.features = dict(self.vocab) # we don't want our vocab to be updated
             feats_freq = sorted(info_to_encode, key=info_to_encode.get, reverse=True)
             self.features.update(dict([(tok, idx+begin) for idx, tok in enumerate(feats_freq)]))
+
         return datasets
 
     def normalise_dataset_syntactic_contexte(self, dataset):
@@ -273,20 +278,20 @@ class TrainingSession(object):
             x_linear_test, y_linear_test = test[verb]
 
 
-            left_branch, model = Sequential(), Sequential()
+            self.left_branch, self.model = Sequential(), Sequential()
 
             if self.use_embeddings: # we use the linear context in both modes
-                left_branch.add(Embedding(size_vocab, 100, input_shape=(size_vocab,),
+                self.left_branch.add(Embedding(size_vocab, 100, input_shape=(size_vocab,),
                                           weights=[embeddings], trainable=self.update_weights))
             else:
-                left_branch.add(Embedding(size_vocab, 100, input_shape=(size_vocab,),
+                self.left_branch.add(Embedding(size_vocab, 100, input_shape=(size_vocab,),
                                                 trainable=self.update_weights))
-            left_branch.add(Flatten())
-            left_branch.add(Dense(140, activation='tanh'))
-            left_branch.add(Dropout(0.2))
+            self.left_branch.add(Flatten())
+            self.left_branch.add(Dense(140, activation='tanh'))
+            self.left_branch.add(Dropout(0.2))
 
             if self.mode == "linear": # if the mode is linear, there is no other input
-                model = left_branch
+                self.model = self.left_branch
 
             elif self.mode == "syntactic":
                 syntactic_dataset = self.get_syntactic_dataset()
@@ -294,47 +299,40 @@ class TrainingSession(object):
                 x_syntactic_train, y_syntactic_train = syntactic_dataset[0][verb]
                 x_syntactic_test, y_syntactic_test = syntactic_dataset[1][verb]
 
-                # TODO : virer ça quand je saurais d'où vient le problème
-                x_linear_train = x_linear_train[:len(x_syntactic_train)]
-                y_linear_train = y_linear_train[:len(y_syntactic_train)]
-                x_linear_test = x_linear_test[:len(x_syntactic_test)]
-                y_linear_test = y_linear_test[:len(y_syntactic_test)]
-
-                right_branch = Sequential()
+                self.right_branch = Sequential()
 
                 # adding 2nd input based on syntactic features
-                right_branch.add(Embedding(nb_features, 100, input_shape=(nb_features,)))
-                right_branch.add(Flatten())
-                right_branch.add(Dense(80, activation="tanh"))
-                merged = Merge([left_branch, right_branch], mode="concat")
-                model.add(merged)
+                self.right_branch.add(Embedding(nb_features, 100, input_shape=(nb_features,)))
+                self.right_branch.add(Flatten())
+                self.right_branch.add(Dense(80, activation="tanh"))
+                self.merged = Merge([self.left_branch, self.right_branch], mode="concat")
+                self.model.add(self.merged)
 
-            model.add(Dense(nb_neuron_output, activation='softmax'))
-            model.compile(optimizer='adam', loss='categorical_crossentropy',
+            self.model.add(Dense(nb_neuron_output, activation='softmax'))
+            self.model.compile(optimizer='adam', loss='categorical_crossentropy',
                           metrics=['accuracy'])
             checkpoint = ModelCheckpoint("best_weights.hdf5", monitor='val_acc',
                                          verbose=1, save_best_only=True, mode='max')
             callbacks_list = [checkpoint]
-            model.summary()
+            self.model.summary()
 
             if self.mode == "linear":
-                model.fit(x_linear_train, y_linear_train, epochs=self.nb_epochs, callbacks=callbacks_list)
-                score = model.evaluate(x_linear_test, y_linear_test,
+                self.model.fit(x_linear_train, y_linear_train, epochs=self.nb_epochs, callbacks=callbacks_list)
+                score = self.model.evaluate(x_linear_test, y_linear_test,
                                        batch_size=1, verbose=1)
             elif self.mode == "syntactic":
-                model.fit([x_linear_train, x_syntactic_train], y_linear_train, epochs=self.nb_epochs, callbacks=callbacks_list)
-                score = model.evaluate([x_linear_test, x_syntactic_test], y_linear_test,
+                self.model.fit([x_linear_train, x_syntactic_train], y_linear_train, epochs=self.nb_epochs, callbacks=callbacks_list)
+                score = self.model.evaluate([x_linear_test, x_syntactic_test], y_linear_test,
                                        batch_size=1, verbose=1)
 
-            self.model = model
             self.results[verb]["loss"], self.results[verb]["accuracy"] = score
             self.results[verb]["mfs"] = MFS.get(verb)
-
-            plot_model(self.model, to_file='model.png')
 
 # TODO : faire en sorte qu'il y ait un partage des arguments de la session avec read_data et parse_syntax pour chaque fonction qui le requière (use attrbutes ? import class ?)
 
 if __name__ == "__main__":
-    # nb_epochs = 15
-    T_1 = TrainingSession("syntactic", 0.8, 3, 400, True, True, 2)
+
+    T_1 = TrainingSession("syntactic", 0.8, 15, 400, True, True, 2)
     T_1.run_one_session()
+    plot_model(T_1.model, to_file='model.png', show_shapes=True)
+    print(T_1.results)
