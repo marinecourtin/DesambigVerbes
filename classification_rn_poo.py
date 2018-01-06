@@ -132,10 +132,11 @@ class TrainingSession(object):
         train, test = self.get_linear_dataset()
 
         for verb in self.classes:
-
+            print(verb)
             nb_neuron_output = self.classes.get(verb)
             x_linear_train, y_linear_train = train[verb]
             x_linear_test, y_linear_test = test[verb]
+
 
             left_branch, model = Sequential(), Sequential()
 
@@ -145,9 +146,9 @@ class TrainingSession(object):
             else:
                 left_branch.add(Embedding(size_vocab, 100, input_shape=(size_vocab,),
                                                 trainable=self.update_weights))
-                left_branch.add(Flatten())
-                left_branch.add(Dense(140, activation='tanh'))
-                left_branch.add(Dropout(0.2))
+            left_branch.add(Flatten())
+            left_branch.add(Dense(140, activation='tanh'))
+            left_branch.add(Dropout(0.2))
 
             if self.mode == "linear": # if the mode is linear, there is no other input
                 model = left_branch
@@ -163,12 +164,18 @@ class TrainingSession(object):
                 x_linear_test = x_linear_test[:len(x_syntactic_test)]
                 y_linear_test = y_linear_test[:len(y_syntactic_test)]
 
+
+                # print(len(x_linear_train), len(y_linear_train), len(x_linear_test), len(y_linear_test))
+                # print(len(x_syntactic_train), len(y_syntactic_train), len(x_syntactic_test), len(y_syntactic_test))
                 right_branch = Sequential()
 
                 # adding 2nd input based on syntactic features
+                print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                # print(self.nb_features)
                 right_branch.add(Embedding(self.nb_features, 100, input_shape=(self.nb_features,)))
                 right_branch.add(Flatten())
                 right_branch.add(Dense(80, activation="tanh"))
+                print(left_branch.output_shape, right_branch.output_shape)
                 merged = Merge([left_branch, right_branch], mode="concat")
                 model.add(merged)
 
