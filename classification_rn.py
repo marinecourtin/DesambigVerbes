@@ -43,15 +43,28 @@ class TrainingSession(object):
     def find_mfs(self):
         """
         Computes the most_frequent_sense.
+
+        input :
+            - the TrainingSession object
+
+        output :
+            - a dictionary with the mfs for each verb.
         """
         MFS = read_data.most_frequent_sense(self.train, self.test)
         return MFS
 
-    def code_dico_linear_context(self, dico):
+    def get_linear_ctx_dataset(self, dico):
         """
         Creates a coded version of the context and updates the dictionary with its value.
+
+        input :
+            - the TrainingSession object
+            - TrainingSession.train or TrainingSession.test
+
+        output :
+            - the dataset for training the classifier on linear context
         """
-        result = {}
+        linear_ctx_dataset = {}
         for key in dico:
             x, y = [], []
             for occ in dico[key]:
@@ -59,21 +72,14 @@ class TrainingSession(object):
                 coded_ctx = read_data.linear_ctx_2_cbow(self, linear_ctx)
                 x.append(coded_ctx)
                 y.append(dico[key][occ]["classe"])
-            result[key] = [np.array(x), np.array(y)]
-        return result
+            linear_ctx_dataset[key] = [np.array(x), np.array(y)]
 
-    def get_linear_dataset(self):
-        """
-        Creates the datasets for training the classifier on linear context.
-        """
-        train = self.code_dico_linear_context(self.train)
-        test = self.code_dico_linear_context(self.test)
+        return linear_ctx_dataset
 
-        return train, test
 
-    def make_dataset_syntax(self, dico, training):
+    def parse_syntax_dataset(self, training):
         """
-        Transforms a gold dictionary (train or test) into the dataset to train the NN with syntactic contexts (Surface and Deep).
+        Transforms a gold dictionary (train or test) into the dataset to train the NN with syntactic contexts (Surface or Deep).
         Also updates the dictionaries to encode PoS, syntactic relations, voice(diathèse) as well as lemmas.
 
         input :
@@ -83,12 +89,18 @@ class TrainingSession(object):
         output :
             - dataset for each verb [[voice, syn_level_1, syn_rel_1, lemma_1, pos_1, syn_level_2...], [classe]] (1+4 features by dependency)
         """
-        datasets, info_to_encode = dict([(verb, []) for verb in dico]), {}
+        datasets, info_to_encode = dict([(verb, []) for verb in self.classes]), {}
+
+        if training:
+            dico = self.train
+        else:
+            dico = self.test
+
         for verb in dico:
-            for bloc in dico[verb]:
+            for occ in dico[verb].keys():
 
                 syntactic_context = []
-                bloc_sentence = dico[verb][bloc]["conll"]
+                bloc_sentence = dico[verb][occ]["conll"]
                 motif = re.compile(r"^(?:(\d+)\t)(?:.+?(?:diat=(.+?)\|[^\t]*)?sense=(?:.+?)\|)", re.MULTILINE)
 
                 try:
@@ -161,14 +173,16 @@ class TrainingSession(object):
 
         return datasets
 
-    def normalise_dataset_syntactic_contexte(self, dataset):
+    def normalise_syntactic_dataset(self, training):
         """
         Replaces the string values of features with integers in a fixed hashing space.
 
         input:
-            - the dataset w
+            - the TrainingSession object
+            - a boolean True for training, False for test
         """
 
+        dataset = self.parse_syntax_dataset(training)
         nb_dimensions = len(self.features)
         output = {}
         for verb in dataset:
@@ -188,18 +202,6 @@ class TrainingSession(object):
             output[verb] = np.array(x_data)
 
         return output
-
-    def get_syntactic_dataset(self):
-        """
-        Creates the dataset for training the network on syntactic data.
-        """
-        train_data = self.make_dataset_syntax(self.train, True)
-        test_data = self.make_dataset_syntax(self.test, False)
-
-        train_normalised_dataset = self.normalise_dataset_syntactic_contexte(train_data)
-        test_normalised_dataset = self.normalise_dataset_syntactic_contexte(test_data)
-
-        return train_normalised_dataset, test_normalised_dataset
 
     def code_embeddings(self):
         """
@@ -228,8 +230,13 @@ class TrainingSession(object):
 
         MFS = self.find_mfs()
         size_vocab = len(self.vocab)
-        train, test = self.get_linear_dataset()
+        train = self.get_linear_ctx_dataset(self.train)
+        test = self.get_linear_ctx_dataset(self.test)
         embeddings = self.code_embeddings()
+
+        if self.mode in ["deep_s", "surface_s"]:
+            x_syntactic_train = self.normalise_syntactic_dataset(True)
+            x_syntactic_test = self.normalise_syntactic_dataset(False)
 
         for verb in self.classes:
 
@@ -254,11 +261,9 @@ class TrainingSession(object):
             if self.mode == "linear": # if the mode is linear, there is no other input
                 model = left_branch
 
-            elif self.mode == "deep_s" or self.mode == "surface_s":
-                syntactic_dataset = self.get_syntactic_dataset()
+            elif self.mode in ["deep_s", "surface_s"]:
+
                 nb_features = len(self.features)
-                x_syntactic_train = syntactic_dataset[0][verb]
-                x_syntactic_test = syntactic_dataset[1][verb]
 
                 right_branch = Sequential()
 
@@ -282,8 +287,8 @@ class TrainingSession(object):
                 score = model.evaluate(x_linear_test, y_linear_test,
                                        batch_size=1, verbose=1)
             elif self.mode == "deep_s" or self.mode == "surface_s":
-                model.fit([x_linear_train, x_syntactic_train], y_linear_train, epochs=self.nb_epochs, callbacks=callbacks_list)
-                score = model.evaluate([x_linear_test, x_syntactic_test], y_linear_test,
+                model.fit([x_linear_train, x_syntactic_train[verb]], y_linear_train, epochs=self.nb_epochs, callbacks=callbacks_list)
+                score = model.evaluate([x_linear_test, x_syntactic_test[verb]], y_linear_test,
                                        batch_size=1, verbose=1)
             self.model = model
             self.results[verb]["loss"], self.results[verb]["accuracy"] = score
@@ -291,7 +296,7 @@ class TrainingSession(object):
 
 if __name__ == "__main__":
 
-    T_1 = TrainingSession("deep_s", 0.8, 15, 400, True, True, 2)
+    T_1 = TrainingSession("deep_s", 0.8, 3, 400, True, True, 2)
     T_1.run_one_session()
     plot_model(T_1.model, to_file='model.png', show_shapes=True)
     print(T_1.mode, T_1.train_p, T_1.nb_epochs, T_1.size_vocab, T_1.use_embeddings, T_1.update_weights, T_1.ctx_size, "dropout=0.2")
