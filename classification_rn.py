@@ -10,14 +10,13 @@ from keras.layers import Dense, Embedding, Flatten, Dropout, Merge
 from keras.utils import plot_model
 from keras.callbacks import ModelCheckpoint
 
-# TODO : regarder si c'est pas trop galere de changer Merge
 
 class TrainingSession(object):
 
     dir = "../data_WSD_VS"
     model_file = "../vecs100-linear-frwiki/data"
     classes = {"aborder":4, "affecter":4, "abattre":5}
-    pos_ignored = r"^(NONE)$"
+    pos_ignored = r"^(PONCT|)$"
     model = Sequential()
 
     def __init__(self, **kwargs):
@@ -63,17 +62,27 @@ class TrainingSession(object):
 
     def parse_syntax_dataset(self, training):
         """
-        Transforms a gold dictionary (train or test) into the dataset to train the NN with syntactic contexts (Surface or Deep).
-        Also updates the dictionaries to encode PoS, syntactic relations, voice(diathèse) as well as lemmas.
+        Transforms a gold dictionary (train or test) into the dataset to train the NN with
+        syntactic contexts (Surface or Surface & Deep). Also creates a dictionary to encode
+        PoS, syntactic relations, morphosyntactic features...
+
+        Remark : from the point of view of syntax, we should probably represent a dependency
+                by a tuple(syntactic_level, relation, pos), which would be our feature to encode.
+                However due to the very limited dataset, I did not encode them as a unit, but
+                instead encoded each one separately.
 
         input :
-            - dictionary with gold data
-            - dictionaries containing the correspondencies feature <=> code
+            - the TrainingSession object
+            - a boolean indicating whether we're training or testing
 
         output :
-            - dataset for each verb [[voice, syn_level_1, syn_rel_1, lemma_1, pos_1, syn_level_2...], [classe]] (1+4 features by dependency)
+            - a dataset w/ an entry for each verb : [[features_occ1, lemmas_dependents_occ1], ...]
+            - TrainingSession.features which encodes syntactic and morphosyntactic features as weel as lemmas
         """
         datasets, info_to_encode = dict([(verb, []) for verb in self.classes]), {}
+
+        interesting_syn_rel = re.compile(r"obj|suj|ccomp|xcomp|mod|dep|aux\.pass|argc") # can act as a filter
+        not_used_feature = re.compile(r"(sense=|dl=)") # features we are NOT using
 
         if training:
             dico = self.train
@@ -83,57 +92,72 @@ class TrainingSession(object):
         for verb in dico:
             for occ in dico[verb]:
 
-                syntactic_context = []
+                syntactic_context, dep_visited, lemmas_argument = [], [], []
                 bloc_sentence = dico[verb][occ]["conll"]
-                motif = re.compile(r"^(?:(\d+)\t)(?:.+?(?:diat=(.+?)\|[^\t]*)?sense=(?:.+?)\|)", re.MULTILINE)
+                motif = re.compile(r"^(\d+)\t(?:[^\t]+\t){4}([^\t]*sense=[^\t]*)\t[^\t]+\t([^\t]+)\t[^\t]+\t[^\t]+$", re.MULTILINE)
 
                 try:
-                    str_index_verb = re.search(motif, bloc_sentence).group(1)
+                    str_index_verb, feats, role = re.search(motif, bloc_sentence).groups()
                 except AttributeError:
-                    motif_2 = re.compile(r"^(\d+)\t[^\t]+\t(affecter|aborder|abattre|affeterai)", re.MULTILINE)
-                    str_index_verb = re.search(motif_2, bloc_sentence).group(1)
+                    motif_2 = re.compile(r"^(\d+)\t[^\t]+\t(?:affecter|aborder|abattre|affeterai)\t(?:[^\t]+\t){2}([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t[^\t]+$", re.MULTILINE)
+                    str_index_verb, feats, role = re.search(motif_2, bloc_sentence).groups()
 
-                motif_diat = re.compile(r"^%s(?:\t[^\t]+){4}\tdiat=([^\t\|]+)" % str_index_verb, re.MULTILINE)
-                diat = re.search(motif_diat, bloc_sentence)
+                if feats:
+                    feats = feats.split("|")
+                else:
+                    feats = ["feats=None"]
 
-                try:
-                    diathese = "diathese="+diat.group(1)
-                except AttributeError:
-                    diathese = "diathese=False"
-                syntactic_context.append(diathese)
+                for feat in feats:
+                    if re.search(not_used_feature, feat): continue
+                    syntactic_context.append(feat)
+                    info_to_encode[feat] = info_to_encode.get(feat, 0)+1
 
-
-                info_to_encode[diathese] = info_to_encode.get(diathese, 0)+1
                 motif_dep = re.compile(r"^(\d+)\t[^\t]+\t([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t(?:\d+\|)*%s(?:\|\d+)*\t([^\t]+)\t[^\t]" % str_index_verb, re.MULTILINE)
 
                 try:
                     dep = re.search(motif_dep, bloc_sentence).groups()
-                except AttributeError: # no dependants for this verb
+                except AttributeError: # no dependents for this verb
                     syntactic_context.append("dep=False")
                     info_to_encode["dep=False"] = info_to_encode.get("dep=False", 0)+1
 
                 index, lemma_dep, pos_dep, rel_dep = dep
-                motif_sub_dep = re.compile(r"^(?:\d+)\t[^\t]+\t([^\t]+)\t[^\t]+\t([^\t]+)\t[^\t]+\t(?:\d+\|)*%s(?:\|\d+)*\t([^\t]+)\t[^\t]" % index, re.MULTILINE)
+                motif_dep_of_dep = re.compile(r"^(?:\d+)\t[^\t]+\t([^\t]+)\t[^\t]+\t([^((\t|(DET))]+)\t[^\t]+\t(?:\d+\|)*%s(?:\|\d+)*\t([^\t]+)(?:\t[^\t]){2}$" % index, re.MULTILINE)
 
                 for elt in rel_dep.split("|"):
-
                     niveau = elt[0]
-                    if niveau == "I": continue # arg et comp on s'en occupe pas
+                    if niveau == "I": continue # doesn't concern us
                     if niveau != "S" and niveau != "D": niveau = "S&D"
-                    rel_synt = elt.split(":")[-1] # relation canonique TODO verifier
+                    rel_synt = elt.split(":")[-1]
 
                     if not re.search(self.pos_ignored, pos_dep):
-                        if self.mode == "surface_s" and (niveau == "S&D" or niveau == "S"):
-                            syntactic_context.extend([niveau, rel_synt, lemma_dep, pos_dep])
 
-                        elif self.mode == "deep_s" and (niveau == "S&D" or niveau == "D"):
-                            syntactic_context.extend([niveau, rel_synt, lemma_dep, pos_dep])
+                        if not re.search(interesting_syn_rel, rel_synt): continue
+
+                        if self.mode == "surface_s" and niveau == "S&D":
+                            niveau = "S" # we shouldn't have any info about deep relations in this mode
+
+                        # info = tuple([niveau, rel_synt, pos_dep])
+                        info = [niveau, rel_synt, pos_dep]
+                        if niveau == "S&D":
+                            # syntactic_context.append(info)
+                            syntactic_context.extend(info)
+                            dep_visited.append([rel_synt, pos_dep])
+                            lemmas_argument.append(lemma_dep)
+
+                        elif self.mode == "surface_s" and niveau == "S" or self.mode == "deep_s":
+                            if [rel_synt, pos_dep] in dep_visited: continue
+                            # syntactic_context.append(info)
+                            syntactic_context.extend(info)
+                            lemmas_argument.append(lemma_dep)
 
                         for info in [niveau, rel_synt, pos_dep]:
                             info_to_encode[info] = info_to_encode.get(info, 0)+1
 
                     if "mod" in rel_synt and pos_dep == "P": # going further down the tree for modifiers which are prep
-                        lemma_mod, pos_mod, rel_mod = re.search(motif_sub_dep, bloc_sentence).groups()
+                        try:
+                            lemma_mod, pos_mod, rel_mod = re.search(motif_dep_of_dep, bloc_sentence).groups()
+                        except AttributeError:
+                            continue
 
                         rel_mod = rel_mod.split("|")
 
@@ -141,21 +165,37 @@ class TrainingSession(object):
                             niveau = elt[0]
                             if niveau == "I": continue
                             if niveau != "S" and niveau != "D": niveau = "S&D"
-                            rel_synt = elt.split(":")[-1]
+                            rel_synt_mod = elt.split(":")[-1]
 
                             if not re.search(self.pos_ignored, pos_mod):
-                                syntactic_context.extend([niveau, rel_synt, lemma_mod, pos_mod])
 
-                                for info in [niveau, rel_synt, pos_mod]:
-                                    info_to_encode[info] = info_to_encode.get(info, 0)+1
+                                if self.mode == "surface_s" and niveau == "S&D":
+                                    niveau="S"
+                                # info = tuple([niveau, rel_synt_mod, pos_mod])
+                                info = [niveau, rel_synt_mod, pos_mod]
 
-                datasets[verb].append(syntactic_context)
+                                if niveau == "S&D":
+                                    # syntactic_context.append(info)
+                                    syntactic_context.extend(info)
+                                    dep_visited.append([rel_synt_mod, pos_mod])
+                                    lemmas_argument.append(lemma_dep)
+
+                                elif self.mode == "surface_s" and niveau == "S" or self.mode == "deep_s":
+                                    if [rel_synt_mod, pos_mod] in dep_visited: continue
+                                    # syntactic_context.append(info)
+                                    syntactic_context.extand(info)
+                                    lemmas_argument.append(lemma_dep)
+
+                                info_to_encode[info] = info_to_encode.get(info, 0)+1
+                # print(syntactic_context) # uncomment to observe the elements which will be encoded
+                datasets[verb].append([syntactic_context, lemmas_argument])
 
         if training: # create a feature dictionary
             begin = len(self.vocab)
-            self.features = dict(self.vocab) # we don't want our vocab to be updated
+            self.features = dict(self.vocab) # deep copy as we don't want our vocab to be updated
             feats_freq = sorted(info_to_encode, key=info_to_encode.get, reverse=True)
             self.features.update(dict([(tok, idx+begin) for idx, tok in enumerate(feats_freq)]))
+            print(self.features)
 
         return datasets
 
@@ -166,26 +206,41 @@ class TrainingSession(object):
         input:
             - the TrainingSession object
             - a boolean True for training, False for test
+
+        output:
+            - the dataset for training on syntax. Each verb is associated to a list
+            of 2 arrays, 1st one for syntactic features (pos, relations...), the 2nd
+            for vectorized rep. of the lemmas involved in dependency relations
         """
 
         dataset = self.parse_syntax_dataset(training)
         nb_dimensions = len(self.features)
         output = {}
         for verb in self.classes:
-            x_data = []
+            x_synt, x_lemma = [], []
 
             for i in range(len(dataset[verb])):
 
-                length = len(dataset[verb][i]) # nb of features for a given occurence
+                syntactic_context, lemmas_argument = dataset[verb][i]
+                length = len(syntactic_context)
                 rep_vec = np.zeros(nb_dimensions)
 
                 for j in range(length):
-                    feature = dataset[verb][i][j]
+                    feature = syntactic_context[j]
                     index = self.features.get(feature, 0)
                     rep_vec[index] += 1
-                x_data.append(rep_vec)
+                x_synt.append(rep_vec)
 
-            output[verb] = np.array(x_data)
+                length_lemma = len(lemmas_argument)
+                rep_vec = np.zeros(self.size_vocab)
+
+                for k in range(length_lemma):
+                    lemma = lemmas_argument[k]
+                    index = self.vocab.get(lemma, 0)
+                    rep_vec[index] += 1
+                x_lemma.append(rep_vec)
+
+            output[verb] = [np.array(x_synt), np.array(x_lemma)]
 
         return output
 
@@ -193,6 +248,12 @@ class TrainingSession(object):
         """
         Extracts a weight matrix from the pre-trained word embeddings making
         up our vocabulary.
+
+        input :
+            - the TrainingSession object
+
+        output :
+            - an array which we will use to provide weights for our Embedding layer
         """
         model_embeddings = word2vec.load(self.model_file, kind="txt")
         list_arrays = []
@@ -212,13 +273,13 @@ class TrainingSession(object):
         predicts classes for the test data and gives back an evaluation.
 
         Remark : there is one model per verb and for each verb the final model
-                  minimizes the loss.
+                  maximizes the accuracy.
 
         input :
             - the TrainingSession object
 
         output :
-            - un dico TrainingSession.models :
+            - TrainingSession.models :
             {verb : {model, results : {accuracy, mfs, loss}}}
         """
         read_data.load_gold(self)
@@ -229,6 +290,7 @@ class TrainingSession(object):
         size_vocab = len(self.vocab)
         train_linear = self.get_linear_ctx_dataset(self.train)
         test_linear = self.get_linear_ctx_dataset(self.test)
+        embeddings = self.code_embeddings()
 
         if self.mode in ["deep_s", "surface_s"]:
             x_syntactic_train = self.normalise_syntactic_dataset(True)
@@ -243,12 +305,11 @@ class TrainingSession(object):
             left_branch, model = Sequential(), Sequential()
 
             if self.use_embeddings: # we use the linear context in both modes
-                embeddings = self.code_embeddings()
                 left_branch.add(Embedding(size_vocab, 100, input_shape=(size_vocab,),
-                                          weights=[embeddings], trainable=self.update_weights,  name="word_embeddings"))
+                                          weights=[embeddings], trainable=self.update_weights,  name="linear_embeddings"))
             else:
                 left_branch.add(Embedding(size_vocab, 100, input_shape=(size_vocab,),
-                                          trainable=self.update_weights, name="word_embeddings"))
+                                          trainable=self.update_weights, name="linear_embeddings"))
 
             left_branch.add(Flatten(name="flat_second_layer_linear"))
             left_branch.add(Dense(140, activation='tanh', name="third_layer_linear"))
@@ -257,20 +318,32 @@ class TrainingSession(object):
             if self.mode == "linear": # there is only 1 input
                 model = left_branch
 
-            elif self.mode in ["deep_s", "surface_s"]: # 2nd input based on syntactic features
+            elif self.mode in ["deep_s", "surface_s"]: # 2 other inputs based on syntactic features
                 nb_features = len(self.features)
-                right_branch = Sequential()
-                right_branch.add(Embedding(nb_features, 100, input_shape=(nb_features,), name="syntactic_embeddings"))
-                right_branch.add(Flatten(name="flat_second_layer_syntactic"))
-                right_branch.add(Dense(80, activation="tanh", name="third_layer_syntactic"))
-                merged = Merge([left_branch, right_branch], mode="concat", name="concatenated_layer")
+
+                middle_branch = Sequential() # word embeddings of the dependents
+                if self.use_embeddings:
+                    middle_branch.add(Embedding(size_vocab, 100, input_shape=(size_vocab,),
+                                                weights=[embeddings], trainable=self.update_weights,  name="dep_embeddings"))
+                else:
+                    middle_branch.add(Embedding(size_vocab, 100, input_shape=(size_vocab,),
+                                              trainable=self.update_weights, name="dep_embeddings"))
+                middle_branch.add(Flatten())
+                middle_branch.add(Dense(140, activation='tanh'))
+                middle_branch.add(Dropout(0.2))
+
+                right_branch = Sequential() # syntactic features (rel, pos..)
+                right_branch.add(Dense(80, input_shape=(nb_features,), activation="tanh", name="third_layer_syntactic"))
+                right_branch.add(Dense(25, activation="tanh"))
+
+                merged = Merge([left_branch, middle_branch, right_branch], mode="concat", name="concatenated_layer")
                 model.add(merged)
 
             model.add(Dense(nb_neuron_output, activation='softmax', name="last_layer"))
             model.compile(optimizer='adam', loss='categorical_crossentropy',
                           metrics=['accuracy'])
-            callbacks_list = [ModelCheckpoint("best_weights.hdf5", monitor='val_loss',
-                                              verbose=0, save_best_only=True, mode='min')]
+            callbacks_list = [ModelCheckpoint("best_weights.hdf5", monitor='val_acc',
+                                              verbose=0, save_best_only=True, mode='max')]
 
             if self.mode == "linear":
                 model.fit(x_linear_train, y_linear_train, epochs=self.nb_epochs, callbacks=callbacks_list)
@@ -278,8 +351,8 @@ class TrainingSession(object):
                                        batch_size=1, verbose=1)
 
             elif self.mode == "deep_s" or self.mode == "surface_s":
-                model.fit([x_linear_train, x_syntactic_train[verb]], y_linear_train, epochs=self.nb_epochs, callbacks=callbacks_list)
-                score = model.evaluate([x_linear_test, x_syntactic_test[verb]], y_linear_test,
+                model.fit([x_linear_train, x_syntactic_train[verb][1],  x_syntactic_train[verb][0]], y_linear_train, epochs=self.nb_epochs, callbacks=callbacks_list)
+                score = model.evaluate([x_linear_test, x_syntactic_test[verb][1],  x_syntactic_test[verb][0]], y_linear_test,
                                        batch_size=1, verbose=1)
 
             self.models[verb]["model"] = model
@@ -290,13 +363,27 @@ class TrainingSession(object):
 
 if __name__ == "__main__":
 
-    T_1 = TrainingSession(mode="deep_s", train_percentage=0.8, nb_epochs=3, size_vocab=400, use_embeddings=True, update_embeddings=True, ctx_size=2)
+    T_1 = TrainingSession(mode="deep_s", train_percentage=0.8, nb_epochs=15, size_vocab=400, use_embeddings=True, update_embeddings=True, ctx_size=2)
     T_1.run_one_session()
-    print(T_1.mode, T_1.train_p, T_1.nb_epochs, T_1.size_vocab, T_1.use_embeddings, T_1.update_weights, T_1.ctx_size)
     for verb in T_1.classes:
         print(T_1.models[verb]["results"])
-    with open("./results_classification.txt", "w") as outf:
-        outf.write("\t".join(["verb", "mfs", "accuracy", "loss"])+"\n")
-        for verb in T_1.classes:
-            results = T_1.models[verb]["results"]
-            outf.write("\t".join([verb, str(results["mfs"]), str(results["accuracy"]), str(results["loss"])])+"\n")
+
+    # T_2 = TrainingSession(mode="linear", train_percentage=0.8, nb_epochs=1, size_vocab=400, use_embeddings=True, update_embeddings=True, ctx_size=2)
+    # T_3 = TrainingSession(mode="surface_s", train_percentage=0.8, nb_epochs=1, size_vocab=400, use_embeddings=True, update_embeddings=True, ctx_size=2)
+    # T_2.run_one_session()
+    # T_3.run_one_session()
+    #
+    #
+    # with open("./results_classification.txt", "w") as outf:
+    #     outf.write("\t".join(["verb", "mfs", "accuracy", "loss", "mode", "train_percentage", "nb_epochs", "use_embeddings", "update_weights", "ctx_size"])+"\n")
+    # for session in [T_1, T_2, T_3]:
+    #     print(session.mode, session.train_p, session.nb_epochs, session.use_embeddings, session.update_weights, session.ctx_size)
+    #     for verb in session.classes:
+    #         print(session.models[verb]["results"])
+    #     with open("./results_classification.txt", "a") as outf:
+    #         for verb in session.classes:
+    #             results = session.models[verb]["results"]
+    #             outf.write("\t".join([verb, str(results["mfs"]), str(results["accuracy"]),
+    #                        str(results["loss"]), session.mode, str(session.train_p), str(session.nb_epochs),
+    #                        str(session.use_embeddings), str(session.update_weights), str(session.ctx_size)])+"\n")
+    # print(T_1.mode, T_1.train_p, T_1.nb_epochs, T_1.size_vocab, T_1.use_embeddings, T_1.update_weights, T_1.ctx_size)
