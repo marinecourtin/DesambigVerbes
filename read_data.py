@@ -13,7 +13,7 @@ def make_vocab_dico(training_session):
     Used to vectorize the linear context
     """
     conll_files = [fichier for fichier in glob.glob(os.path.join(training_session.dir, "*.conll"))]
-    vocab = {"UKNOWN":99999} # adding a fake token will allow us to make predictions for never-encountered context tokens
+    vocab = {"UKNOWN":99999} # fake token allows us to make predictions for never-encountered context tokens
 
     for fichier in conll_files:
 
@@ -62,7 +62,7 @@ def load_gold(training_session):
 
             try:
                 classe_gold = int(the_match.group(1).split("#")[1])
-            except AttributeError: continue # did not match -> comments
+            except AttributeError: continue # comments
 
             classe_gold_one_hot = np.zeros(training_session.classes[verb])
             classe_gold_one_hot[classe_gold-1] = 1 # one-hot rep of the class because Keras says so
