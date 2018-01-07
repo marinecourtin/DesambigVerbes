@@ -177,33 +177,33 @@ def linear_ctx_2_cbow(training_session, linear_context):
     return rep_ctx
 
 
-def most_frequent_sense(train, test):
+def most_frequent_sense(training_session):
     """
     Computes the baseline results of the MFS for each verb
 
     input :
-        - train, tests : 2 dico with the occurences and their class
+        - the TrainingSession object
 
     output :
         - dico w/ the accuracy of MFS for each verb
     """
     MFS, results = {}, {}
 
-    for verb in train:
+    for verb in training_session.classes.keys():
         MFS[verb] = {}
 
-        for occ in train[verb]:
-            classe_vec = train[verb][occ]["classe"] # 0100
+        for occ in training_session.train[verb].keys():
+            classe_vec = training_session.train[verb][occ]["classe"] # 0100
             sense = np.argmax(classe_vec)+1 # sense n°2
             MFS[verb][sense] = MFS[verb].get(sense, 0)+1
 
     MFS = dict([(verb, sorted(MFS[verb], key=MFS[verb].get, reverse=True)[0]) for verb in MFS])
 
-    for verb in test:
+    for verb in training_session.classes.keys():
         accuracy = []
 
-        for occ in test[verb]:
-            classe_vec = test[verb][occ]["classe"]
+        for occ in training_session.test[verb].keys():
+            classe_vec = training_session.test[verb][occ]["classe"]
             sense = np.argmax(classe_vec)+1
             accuracy.append(sense == MFS.get(verb))
 

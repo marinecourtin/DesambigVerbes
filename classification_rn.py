@@ -40,18 +40,6 @@ class TrainingSession(object):
         self.models =dict(self.train)
         self.features = None
 
-    def find_mfs(self):
-        """
-        Computes the most_frequent_sense.
-
-        input :
-            - the TrainingSession object
-
-        output :
-            - a dictionary with the mfs for each verb.
-        """
-        MFS = read_data.most_frequent_sense(self.train, self.test)
-        return MFS
 
     def get_linear_ctx_dataset(self, dico):
         """
@@ -241,7 +229,7 @@ class TrainingSession(object):
         read_data.make_vocab_dico(self)
         read_data.divide_data_in_train_test(self)
 
-        MFS = self.find_mfs()
+        mfs = read_data.most_frequent_sense(self)
         size_vocab = len(self.vocab)
         train_linear = self.get_linear_ctx_dataset(self.train)
         test_linear = self.get_linear_ctx_dataset(self.test)
@@ -300,13 +288,13 @@ class TrainingSession(object):
 
             self.models[verb]["model"] = model
             self.models[verb]["results"]["loss"], self.models[verb]["results"]["accuracy"] = score
-            self.models[verb]["results"]["mfs"] = MFS.get(verb)
+            self.models[verb]["results"]["mfs"] = mfs.get(verb)
 
         plot_model(model, to_file=verb+"model.png", show_shapes=True) # only for last verb
 
 if __name__ == "__main__":
 
-    T_1 = TrainingSession(mode="deep_s", train_percentage=0.8, nb_epochs=2, size_vocab=400, use_embeddings=True, update_embeddings=True, ctx_size=2)
+    T_1 = TrainingSession(mode="deep_s", train_percentage=0.8, nb_epochs=15, size_vocab=400, use_embeddings=True, update_embeddings=True, ctx_size=2)
     T_1.run_one_session()
     print(T_1.mode, T_1.train_p, T_1.nb_epochs, T_1.size_vocab, T_1.use_embeddings, T_1.update_weights, T_1.ctx_size)
     for verb in T_1.classes:
