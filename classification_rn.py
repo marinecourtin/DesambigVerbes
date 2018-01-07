@@ -245,14 +245,14 @@ class TrainingSession(object):
             if self.use_embeddings: # we use the linear context in both modes
                 embeddings = self.code_embeddings()
                 left_branch.add(Embedding(size_vocab, 100, input_shape=(size_vocab,),
-                                          weights=[embeddings], trainable=self.update_weights))
+                                          weights=[embeddings], trainable=self.update_weights,  name="word_embeddings"))
             else:
                 left_branch.add(Embedding(size_vocab, 100, input_shape=(size_vocab,),
-                                          trainable=self.update_weights))
+                                          trainable=self.update_weights, name="word_embeddings"))
 
-            left_branch.add(Flatten())
-            left_branch.add(Dense(140, activation='tanh'))
-            left_branch.add(Dropout(0.2))
+            left_branch.add(Flatten(name="flat_second_layer_linear"))
+            left_branch.add(Dense(140, activation='tanh', name="third_layer_linear"))
+            left_branch.add(Dropout(0.2, name="fourth_layer_after_dropout"))
 
             if self.mode == "linear": # there is only 1 input
                 model = left_branch
@@ -260,13 +260,13 @@ class TrainingSession(object):
             elif self.mode in ["deep_s", "surface_s"]: # 2nd input based on syntactic features
                 nb_features = len(self.features)
                 right_branch = Sequential()
-                right_branch.add(Embedding(nb_features, 100, input_shape=(nb_features,)))
-                right_branch.add(Flatten())
-                right_branch.add(Dense(80, activation="tanh"))
-                merged = Merge([left_branch, right_branch], mode="concat")
+                right_branch.add(Embedding(nb_features, 100, input_shape=(nb_features,), name="syntactic_embeddings"))
+                right_branch.add(Flatten(name="flat_second_layer_syntactic"))
+                right_branch.add(Dense(80, activation="tanh", name="third_layer_syntactic"))
+                merged = Merge([left_branch, right_branch], mode="concat", name="concatenated_layer")
                 model.add(merged)
 
-            model.add(Dense(nb_neuron_output, activation='softmax'))
+            model.add(Dense(nb_neuron_output, activation='softmax', name="last_layer"))
             model.compile(optimizer='adam', loss='categorical_crossentropy',
                           metrics=['accuracy'])
             callbacks_list = [ModelCheckpoint("best_weights.hdf5", monitor='val_loss',
@@ -286,11 +286,11 @@ class TrainingSession(object):
             self.models[verb]["results"]["loss"], self.models[verb]["results"]["accuracy"] = score
             self.models[verb]["results"]["mfs"] = mfs.get(verb)
 
-        plot_model(model, to_file=verb+"model.png", show_shapes=True) # only for last verb
+        plot_model(model, to_file=verb+"model.png", show_shapes=True) # plot only for last verb
 
 if __name__ == "__main__":
 
-    T_1 = TrainingSession(mode="deep_s", train_percentage=0.8, nb_epochs=15, size_vocab=400, use_embeddings=True, update_embeddings=True, ctx_size=2)
+    T_1 = TrainingSession(mode="deep_s", train_percentage=0.8, nb_epochs=3, size_vocab=400, use_embeddings=True, update_embeddings=True, ctx_size=2)
     T_1.run_one_session()
     print(T_1.mode, T_1.train_p, T_1.nb_epochs, T_1.size_vocab, T_1.use_embeddings, T_1.update_weights, T_1.ctx_size)
     for verb in T_1.classes:
