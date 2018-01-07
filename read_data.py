@@ -12,8 +12,6 @@ def make_vocab_dico(training_session):
     Creates a hashing dictionary token:code and a reverse one code:token
     Used to vectorize the linear context
     """
-    size_vocab = training_session.size_vocab
-    pos_ignored = ['PONCT'] # TODO : pay attention to pos_ignored inconsistencies
     conll_files = [fichier for fichier in glob.glob(os.path.join(training_session.dir, "*.conll"))]
     vocab = {"UKNOWN":99999} # adding a fake token will allow us to make predictions for never-encountered context tokens
 
@@ -27,12 +25,12 @@ def make_vocab_dico(training_session):
             try:
                 token = the_match.group(1)
                 pos = the_match.group(2)
-                if pos in pos_ignored: continue
-                vocab[token] = vocab.get(token, 0)+1
+                if not re.search(training_session.pos_ignored, pos):
+                    vocab[token] = vocab.get(token, 0)+1
 
             except AttributeError: continue
 
-    vocab_freq = sorted(vocab, key=vocab.get, reverse=True)[:size_vocab]
+    vocab_freq = sorted(vocab, key=vocab.get, reverse=True)[:training_session.size_vocab]
     training_session.vocab = dict([(tok, idx) for idx, tok in enumerate(vocab_freq)])
 
 
@@ -105,15 +103,14 @@ def get_linear_ctx(training_session, bloc_sentence):
     Gets a linear context (liste of lemmas) for the verb to disambiguate.
 
     input :
+        - the TrainingSession object
         - bloc_sentence : bloc of text corresponding to a sentence in the conll
-        - pos_ignored : liste of PoS which aren't taken into account
-        - ctx_size : size of the context window
 
     output :
         - list of lemmas present in the context window
     """
     motif = re.compile(r"^(?:(\d+)\t)(?:.+?sense=(?:.+?)\|)", re.MULTILINE)
-    infos_token = re.compile(r"(?:[^\t]+\t){2}([^\t]+)\t([^\t]+)\t(?:[^\t]+\t){5}[^\t]+")
+    infos_token = re.compile(r"(?:[^\t]+\t){2}([^\t]+)\t(?:[^\t]+)\t([^\t]+)\t(?:[^\t]+\t){4}[^\t]+")
 
     try:
         index_verb_to_deambiguate = int(re.search(motif, bloc_sentence).group(1))-1
@@ -127,8 +124,9 @@ def get_linear_ctx(training_session, bloc_sentence):
     for line in bloc_sentence.split("\n"):
 
         try:
-            lemme, upos = re.search(infos_token, line).groups()
-            linear_context.append((lemme, upos))
+            lemme, upos = re.match(infos_token, line).groups()
+            if not re.search(training_session.pos_ignored, upos):
+                linear_context.append((lemme, upos))
         except AttributeError: # empty line
             continue
 
@@ -138,7 +136,7 @@ def get_linear_ctx(training_session, bloc_sentence):
     count = 1
     while count <= training_session.ctx_size:
         try:
-            if linear_context[index_verb_to_deambiguate-count][1] not in training_session.pos_ignored:
+            if linear_context[index_verb_to_deambiguate-count][1]:
                 linear_context_filtered.append(linear_context[index_verb_to_deambiguate-count][0])
                 count += 1
         except IndexError: break
@@ -148,7 +146,7 @@ def get_linear_ctx(training_session, bloc_sentence):
     count = 1
     while count <= training_session.ctx_size:
         try:
-            if linear_context[index_verb_to_deambiguate+count][1] not in training_session.pos_ignored:
+            if linear_context[index_verb_to_deambiguate+count][1]:
                 linear_context_filtered.append(linear_context[index_verb_to_deambiguate+count][0])
                 count += 1
         except IndexError: break
@@ -213,14 +211,3 @@ def most_frequent_sense(train, test):
         results[verb] = accuracy
 
     return results
-
-#
-# if __name__ == "__main__":
-#     GOLD_DIR = "../data_WSD_VS"
-#     CLASSES = {"aborder":4, "affecter":4, "abattre":5}
-#
-#     SIZE_VOCAB = 400
-#
-#     gold_data = load_gold(GOLD_DIR, CLASSES)
-#     dico_code, dico_code_reverse = make_vocab_dico(GOLD_DIR, SIZE_VOCAB)
-#     train, test = divide_data_in_train_test(gold_data)

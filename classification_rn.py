@@ -21,24 +21,24 @@ class TrainingSession(object):
     dir = "../data_WSD_VS"
     model_file = "../vecs100-linear-frwiki/data"
     classes = {"aborder":4, "affecter":4, "abattre":5}
-    pos_ignored = ['PUNCT']
+    pos_ignored = r"^(NONE)$"
     model = Sequential()
 
-    def __init__(self, mode, train_percentage, nb_epochs, size_vocab, use_embeddings, update_weights, ctx_size):
-        self.mode = mode
-        self.train_p = train_percentage
-        self.nb_epochs = nb_epochs
-        self.size_vocab = size_vocab
-        self.use_embeddings = use_embeddings
-        self.update_weights = update_weights
-        self.ctx_size = ctx_size
+    def __init__(self, **kwargs):
+        self.mode = kwargs["mode"]
+        self.train_p = kwargs["train_percentage"]
+        self.nb_epochs = kwargs["nb_epochs"]
+        self.size_vocab = kwargs["size_vocab"]
+        self.use_embeddings = kwargs["use_embeddings"]
+        self.update_weights = kwargs["update_embeddings"]
+        self.ctx_size = kwargs["ctx_size"]
 
-        self.results = dict([(key, {}) for key in self.classes])
+        self.train = dict([(key, {}) for key in self.classes])
+        self.test = dict(self.train)
         self.gold_data = {}
         self.vocab = None
-        self.model = None
+        self.models =dict(self.train)
         self.features = None
-        self.train, self.test = dict(self.results), dict(self.results)
 
     def find_mfs(self):
         """
@@ -138,14 +138,15 @@ class TrainingSession(object):
                     if niveau != "S" and niveau != "D": niveau = "S&D"
                     rel_synt = elt.split(":")[-1] # relation canonique TODO verifier
 
-                    if self.mode == "surface_s" and (niveau == "S&D" or niveau == "S"):
-                        syntactic_context.extend([niveau, rel_synt, lemma_dep, pos_dep])
+                    if not re.search(self.pos_ignored, pos_dep):
+                        if self.mode == "surface_s" and (niveau == "S&D" or niveau == "S"):
+                            syntactic_context.extend([niveau, rel_synt, lemma_dep, pos_dep])
 
-                    elif self.mode == "deep_s" and (niveau == "S&D" or niveau == "D"):
-                        syntactic_context.extend([niveau, rel_synt, lemma_dep, pos_dep])
+                        elif self.mode == "deep_s" and (niveau == "S&D" or niveau == "D"):
+                            syntactic_context.extend([niveau, rel_synt, lemma_dep, pos_dep])
 
-                    for info in [niveau, rel_synt, pos_dep]:
-                        info_to_encode[info] = info_to_encode.get(info, 0)+1
+                        for info in [niveau, rel_synt, pos_dep]:
+                            info_to_encode[info] = info_to_encode.get(info, 0)+1
 
                     if "mod" in rel_synt and pos_dep == "P": # going further down the tree for modifiers which are prep
                         lemma_mod, pos_mod, rel_mod = re.search(motif_sub_dep, bloc_sentence).groups()
@@ -158,10 +159,11 @@ class TrainingSession(object):
                             if niveau != "S" and niveau != "D": niveau = "S&D"
                             rel_synt = elt.split(":")[-1] # relation canonique TODO verifier
 
-                            syntactic_context.extend([niveau, rel_synt, lemma_mod, pos_mod])
+                            if not re.search(self.pos_ignored, pos_mod):
+                                syntactic_context.extend([niveau, rel_synt, lemma_mod, pos_mod])
 
-                            for info in [niveau, rel_synt, pos_mod]:
-                                info_to_encode[info] = info_to_encode.get(info, 0)+1
+                                for info in [niveau, rel_synt, pos_mod]:
+                                    info_to_encode[info] = info_to_encode.get(info, 0)+1
 
                 datasets[verb].append(syntactic_context)
 
@@ -222,7 +224,18 @@ class TrainingSession(object):
 
     def run_one_session(self):
         """
-        Given a set of parameters, runs a session with training, prediction and evaluation.
+        Runs an entire session : creates the appropriate datasets, trains a model for each verb,
+        predicts classes for the test data and gives back an evaluation.
+
+        Remark : there is one model per verb and for each verb the final model
+                  minimizes the loss.
+
+        input :
+            - the TrainingSession object
+
+        output :
+            - un dico TrainingSession.models :
+            {verb : {model, results : {accuracy, mfs, loss}}}
         """
         read_data.load_gold(self)
         read_data.make_vocab_dico(self)
@@ -230,44 +243,39 @@ class TrainingSession(object):
 
         MFS = self.find_mfs()
         size_vocab = len(self.vocab)
-        train = self.get_linear_ctx_dataset(self.train)
-        test = self.get_linear_ctx_dataset(self.test)
-        embeddings = self.code_embeddings()
+        train_linear = self.get_linear_ctx_dataset(self.train)
+        test_linear = self.get_linear_ctx_dataset(self.test)
 
         if self.mode in ["deep_s", "surface_s"]:
             x_syntactic_train = self.normalise_syntactic_dataset(True)
             x_syntactic_test = self.normalise_syntactic_dataset(False)
 
         for verb in self.classes:
+            self.models[verb] = {"model":None, "results":{}}
 
             nb_neuron_output = self.classes.get(verb)
-            x_linear_train, y_linear_train = train[verb]
-            x_linear_test, y_linear_test = test[verb]
-
-
+            x_linear_train, y_linear_train = train_linear[verb]
+            x_linear_test, y_linear_test = test_linear[verb]
             left_branch, model = Sequential(), Sequential()
 
             if self.use_embeddings: # we use the linear context in both modes
+                embeddings = self.code_embeddings()
                 left_branch.add(Embedding(size_vocab, 100, input_shape=(size_vocab,),
                                           weights=[embeddings], trainable=self.update_weights))
             else:
                 left_branch.add(Embedding(size_vocab, 100, input_shape=(size_vocab,),
                                           trainable=self.update_weights))
+
             left_branch.add(Flatten())
             left_branch.add(Dense(140, activation='tanh'))
-            dropout = 0.2
-            left_branch.add(Dropout(dropout))
+            left_branch.add(Dropout(0.2))
 
-            if self.mode == "linear": # if the mode is linear, there is no other input
+            if self.mode == "linear": # there is only 1 input
                 model = left_branch
 
-            elif self.mode in ["deep_s", "surface_s"]:
-
+            elif self.mode in ["deep_s", "surface_s"]: # 2nd input based on syntactic features
                 nb_features = len(self.features)
-
                 right_branch = Sequential()
-
-                # adding 2nd input based on syntactic features
                 right_branch.add(Embedding(nb_features, 100, input_shape=(nb_features,)))
                 right_branch.add(Flatten())
                 right_branch.add(Dense(80, activation="tanh"))
@@ -277,27 +285,34 @@ class TrainingSession(object):
             model.add(Dense(nb_neuron_output, activation='softmax'))
             model.compile(optimizer='adam', loss='categorical_crossentropy',
                           metrics=['accuracy'])
-            checkpoint = ModelCheckpoint("best_weights.hdf5", monitor='val_loss',
-                                         verbose=1, save_best_only=True, mode='min')
-            callbacks_list = [checkpoint]
-            model.summary()
+            callbacks_list = [ModelCheckpoint("best_weights.hdf5", monitor='val_loss',
+                                         verbose=0, save_best_only=True, mode='min')]
 
             if self.mode == "linear":
                 model.fit(x_linear_train, y_linear_train, epochs=self.nb_epochs, callbacks=callbacks_list)
                 score = model.evaluate(x_linear_test, y_linear_test,
                                        batch_size=1, verbose=1)
+
             elif self.mode == "deep_s" or self.mode == "surface_s":
                 model.fit([x_linear_train, x_syntactic_train[verb]], y_linear_train, epochs=self.nb_epochs, callbacks=callbacks_list)
                 score = model.evaluate([x_linear_test, x_syntactic_test[verb]], y_linear_test,
                                        batch_size=1, verbose=1)
-            self.model = model
-            self.results[verb]["loss"], self.results[verb]["accuracy"] = score
-            self.results[verb]["mfs"] = MFS.get(verb)
+
+            self.models[verb]["model"] = model
+            self.models[verb]["results"]["loss"], self.models[verb]["results"]["accuracy"] = score
+            self.models[verb]["results"]["mfs"] = MFS.get(verb)
+
+        plot_model(model, to_file=verb+"model.png", show_shapes=True) # only for last verb
 
 if __name__ == "__main__":
 
-    T_1 = TrainingSession("deep_s", 0.8, 3, 400, True, True, 2)
+    T_1 = TrainingSession(mode="deep_s", train_percentage=0.8, nb_epochs=2, size_vocab=400, use_embeddings=True, update_embeddings=True, ctx_size=2)
     T_1.run_one_session()
-    plot_model(T_1.model, to_file='model.png', show_shapes=True)
-    print(T_1.mode, T_1.train_p, T_1.nb_epochs, T_1.size_vocab, T_1.use_embeddings, T_1.update_weights, T_1.ctx_size, "dropout=0.2")
-    print(T_1.results)
+    print(T_1.mode, T_1.train_p, T_1.nb_epochs, T_1.size_vocab, T_1.use_embeddings, T_1.update_weights, T_1.ctx_size)
+    for verb in T_1.classes:
+        print(T_1.models[verb]["results"])
+    with open("./results_classification.txt", "w") as outf:
+        outf.write("\t".join(["verb", "mfs", "accuracy", "loss"])+"\n")
+        for verb in T_1.classes:
+            results = T_1.models[verb]["results"]
+            outf.write("\t".join([verb, str(results["mfs"]), str(results["accuracy"]), str(results["loss"])])+"\n")
