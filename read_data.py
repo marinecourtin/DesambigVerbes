@@ -189,20 +189,20 @@ def most_frequent_sense(training_session):
     """
     MFS, results = {}, {}
 
-    for verb in training_session.classes.keys():
+    for verb in training_session.classes:
         MFS[verb] = {}
 
-        for occ in training_session.train[verb].keys():
+        for occ in training_session.train[verb]:
             classe_vec = training_session.train[verb][occ]["classe"] # 0100
             sense = np.argmax(classe_vec)+1 # sense n°2
             MFS[verb][sense] = MFS[verb].get(sense, 0)+1
 
     MFS = dict([(verb, sorted(MFS[verb], key=MFS[verb].get, reverse=True)[0]) for verb in MFS])
 
-    for verb in training_session.classes.keys():
+    for verb in training_session.classes:
         accuracy = []
 
-        for occ in training_session.test[verb].keys():
+        for occ in training_session.test[verb]:
             classe_vec = training_session.test[verb][occ]["classe"]
             sense = np.argmax(classe_vec)+1
             accuracy.append(sense == MFS.get(verb))

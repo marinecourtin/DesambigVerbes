@@ -10,11 +10,7 @@ from keras.layers import Dense, Embedding, Flatten, Dropout, Merge
 from keras.utils import plot_model
 from keras.callbacks import ModelCheckpoint
 
-
-
-# TODO : virer ça et corriger les trucs qui provoquent des warnings
-import warnings
-warnings.filterwarnings("ignore")
+# TODO : regarder si c'est pas trop galere de changer Merge
 
 class TrainingSession(object):
 
@@ -37,7 +33,7 @@ class TrainingSession(object):
         self.test = dict(self.train)
         self.gold_data = {}
         self.vocab = None
-        self.models =dict(self.train)
+        self.models = dict(self.train)
         self.features = None
 
 
@@ -85,7 +81,7 @@ class TrainingSession(object):
             dico = self.test
 
         for verb in dico:
-            for occ in dico[verb].keys():
+            for occ in dico[verb]:
 
                 syntactic_context = []
                 bloc_sentence = dico[verb][occ]["conll"]
@@ -145,7 +141,7 @@ class TrainingSession(object):
                             niveau = elt[0]
                             if niveau == "I": continue
                             if niveau != "S" and niveau != "D": niveau = "S&D"
-                            rel_synt = elt.split(":")[-1] # relation canonique TODO verifier
+                            rel_synt = elt.split(":")[-1]
 
                             if not re.search(self.pos_ignored, pos_mod):
                                 syntactic_context.extend([niveau, rel_synt, lemma_mod, pos_mod])
@@ -175,7 +171,7 @@ class TrainingSession(object):
         dataset = self.parse_syntax_dataset(training)
         nb_dimensions = len(self.features)
         output = {}
-        for verb in dataset:
+        for verb in self.classes:
             x_data = []
 
             for i in range(len(dataset[verb])):
@@ -201,7 +197,7 @@ class TrainingSession(object):
         model_embeddings = word2vec.load(self.model_file, kind="txt")
         list_arrays = []
 
-        for word in self.vocab.keys():
+        for word in self.vocab:
             try:
                 list_arrays.append(model_embeddings[word])
             except KeyError:
@@ -274,7 +270,7 @@ class TrainingSession(object):
             model.compile(optimizer='adam', loss='categorical_crossentropy',
                           metrics=['accuracy'])
             callbacks_list = [ModelCheckpoint("best_weights.hdf5", monitor='val_loss',
-                                         verbose=0, save_best_only=True, mode='min')]
+                                              verbose=0, save_best_only=True, mode='min')]
 
             if self.mode == "linear":
                 model.fit(x_linear_train, y_linear_train, epochs=self.nb_epochs, callbacks=callbacks_list)
